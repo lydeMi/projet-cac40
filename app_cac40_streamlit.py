@@ -39,22 +39,18 @@ if st.button("Lancer la collecte des données", key="launch_collection_button"):
     print(f"DEBUG_LOG: Début de la collecte pour {len(tickers_symbols_to_collect)} tickers.")
 
     # Définir les colonnes attendues dans le DataFrame final après le traitement
-    # L'ordre est important pour pd.concat si on ne spécifie pas les colonnes à chaque fois (ce qu'on fait ici)
     EXPECTED_COLUMNS = ['Datetime', 'Open', 'High', 'Low', 'Close', 'Volume', 'Ticker']
 
     # Boucle de collecte pour chaque ticker sélectionné
     for i, ticker_symbol in enumerate(tickers_symbols_to_collect):
         # Tente de retrouver le nom de l'entreprise pour un affichage plus convivial
         company_name = [name for name, symbol in tickers_dict.items() if symbol == ticker_symbol]
-        company_display_name = company_name[0] if company_name else ticker_symbol # Utilise le symbole si le nom n'est pas trouvé
+        company_display_name = company_name[0] if company_name else ticker_symbol
         
         st.write(f"Collecte des données pour : **{company_display_name} ({ticker_symbol})** ({i+1}/{len(tickers_symbols_to_collect)})")
         print(f"DEBUG_LOG: Tentative de collecte pour {ticker_symbol} (étape {i+1}/{len(tickers_symbols_to_collect)}).")
 
         try:
-            # Télécharger les données intraday (période "1d", intervalle "1m")
-            # FutureWarning: YF.download() has changed argument auto_adjust default to True
-            # -> Cette warning est normale et n'est pas un problème.
             data = yf.download(ticker_symbol, period="1d", interval="1m", progress=False)
 
             if not data.empty:
@@ -64,16 +60,19 @@ if st.button("Lancer la collecte des données", key="launch_collection_button"):
                 # Étape 2: Ajouter la colonne 'Ticker' pour identifier l'entreprise
                 data["Ticker"] = ticker_symbol
                 
-                # Étape 3: Normaliser les noms de colonnes pour qu'ils correspondent à EXPECTED_COLUMNS
-                # yfinance retourne souvent 'Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close'
-                # Assurez-vous que les premières lettres sont en majuscule, sauf 'Datetime' et 'Ticker'
-                new_columns = []
-                for col in data.columns:
-                    if col not in ['Datetime', 'Ticker']:
-                        new_columns.append(col.capitalize())
-                    else:
-                        new_columns.append(col)
-                data.columns = new_columns
+                # Étape 3: Normaliser les noms de colonnes. Gérer le MultiIndex de yfinance.
+                if isinstance(data.columns, pd.MultiIndex):
+                    # Si c'est un MultiIndex, nous voulons le premier niveau et le capitaliser
+                    new_columns = []
+                    for col_tuple in data.columns:
+                        # Prend le premier élément du tuple si c'est un tuple, sinon le nom de colonne tel quel
+                        col_name = col_tuple[0] if isinstance(col_tuple, tuple) else col_tuple
+                        new_columns.append(col_name.capitalize() if col_name != 'Datetime' else col_name)
+                    data.columns = new_columns
+                else:
+                    # Si ce n'est pas un MultiIndex, applique la logique de capitalisation habituelle
+                    data.columns = [col.capitalize() if col != 'Datetime' else col for col in data.columns]
+
 
                 # Étape 4: Créer un DataFrame vide avec la structure EXACTE des colonnes attendues
                 processed_data = pd.DataFrame(columns=EXPECTED_COLUMNS)
@@ -83,7 +82,6 @@ if st.button("Lancer la collecte des données", key="launch_collection_button"):
                     if col in data.columns:
                         processed_data[col] = data[col]
                     else:
-                        # Si une colonne attendue manque (peu probable avec yfinance), ajoutez-la avec NaN
                         processed_data[col] = np.nan 
                         st.warning(f"La colonne '{col}' est manquante pour {ticker_symbol} et a été ajoutée avec des valeurs vides.")
 
@@ -92,7 +90,6 @@ if st.button("Lancer la collecte des données", key="launch_collection_button"):
                 
                 # Étape 7: Ajouter le DataFrame traité à la liste pour la concaténation
                 collected_dfs.append(processed_data)
-                # Stocker également une copie pour les graphiques individuels si l'utilisateur veut sélectionner
                 data_by_ticker[ticker_symbol] = processed_data 
 
                 st.success(f"{company_display_name} ({ticker_symbol}) collecté avec succès. {len(processed_data)} lignes.")
@@ -106,35 +103,29 @@ if st.button("Lancer la collecte des données", key="launch_collection_button"):
             print(f"DEBUG_LOG: Erreur pour {ticker_symbol}: {e}")
 
         # Ajout d'un délai pour éviter le rate limiting de Yahoo Finance
-        time.sleep(1) # Délai de 1 seconde entre chaque requête.
+        time.sleep(1) 
 
     st.info(f"Fin de la collecte. Nombre de DataFrames valides collectés : {len(collected_dfs)}")
     print(f"DEBUG_LOG: Fin de la boucle de collecte. {len(collected_dfs)} DataFrames validés.")
 
     # --- Concaténation des DataFrames ---
     if collected_dfs:
-        # pd.concat combine les DataFrames. axis=0 est la valeur par défaut pour une concaténation verticale.
-        # ignore_index=True réinitialise l'index du DataFrame final (de 0 à N-1)
-        # pour éviter les index dupliqués des DataFrames sources.
         df_final = pd.concat(collected_dfs, ignore_index=True)
         
-        st.session_state['full_df'] = df_final # Sauvegarder le DataFrame combiné en session
-        st.session_state['data_by_ticker'] = data_by_ticker # Sauvegarder les DataFrames individuels en session
+        st.session_state['full_df'] = df_final 
+        st.session_state['data_by_ticker'] = data_by_ticker 
 
         st.write("--- Résumé des données agrégées ---")
         st.write(f"Nombre total de lignes dans le DataFrame final : {len(df_final)}")
         st.write("Distribution des tickers dans le DataFrame final :")
-        # Affiche le nombre de lignes pour chaque ticker dans le DataFrame final
         st.dataframe(df_final['Ticker'].value_counts()) 
         st.write("Aperçu des premières lignes du DataFrame final :")
 
-        # Affiche les 20 premières lignes du DataFrame final pour vérifier la concaténation verticale
         st.dataframe(df_final.head(20)) 
 
         # --- Section Graphiques Détaillés ---
         st.subheader("Graphiques Intraday Détaillés")
         if data_by_ticker:
-            # Préparer les options pour le selectbox (nom de l'entreprise)
             ticker_display_names_map = {v: k for k, v in tickers_dict.items()}
             plot_selection_options = sorted([ticker_display_names_map.get(s, s) for s in data_by_ticker.keys()])
 
@@ -143,13 +134,11 @@ if st.button("Lancer la collecte des données", key="launch_collection_button"):
                 plot_selection_options,
                 key="main_plot_select"
             )
-            # Retrouver le symbole du ticker à partir du nom sélectionné pour récupérer le bon DataFrame
-            ticker_to_plot_symbol = tickers_dict.get(selected_plot_name, selected_plot_name) # Fallback si le nom ne matche pas un symbole
-
+            ticker_to_plot_symbol = tickers_dict.get(selected_plot_name, selected_plot_name) 
+            
             chart_df = data_by_ticker.get(ticker_to_plot_symbol)
 
             if chart_df is not None and not chart_df.empty:
-                # Création du graphique en chandeliers avec Plotly
                 fig = go.Figure(data=[go.Candlestick(
                     x=chart_df['Datetime'],
                     open=chart_df['Open'],
@@ -163,7 +152,7 @@ if st.button("Lancer la collecte des données", key="launch_collection_button"):
                     title=f"Cours Intraday en Chandeliers de {selected_plot_name} ({ticker_to_plot_symbol})",
                     xaxis_title="Heure",
                     yaxis_title="Prix",
-                    xaxis_rangeslider_visible=False # Cache le range slider pour un affichage plus clair
+                    xaxis_rangeslider_visible=False 
                 )
                 st.plotly_chart(fig, use_container_width=True, key="main_candlestick_chart")
             else:
@@ -183,7 +172,6 @@ if st.button("Lancer la collecte des données", key="launch_collection_button"):
         st.warning("Aucune donnée du CAC 40 n'a pu être récupérée pour les entreprises sélectionnées.")
 
 # --- Section pour l'affichage des données en cache (si déjà collectées) ---
-# Ceci permet d'interagir avec les graphiques et le CSV sans relancer la collecte à chaque fois
 if 'full_df' in st.session_state and 'data_by_ticker' in st.session_state:
     st.subheader("Graphiques Intraday Détaillés (Données en cache)")
     data_by_ticker_cached = st.session_state['data_by_ticker'] 
