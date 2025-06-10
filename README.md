@@ -8,4 +8,13 @@ Cette application Streamlit permet de récupérer en temps réel les données in
 - Affichage des données en tableau et graphique
 - Export des résultats en CSV
 
+  ## Installation
+  pip install -r requirements.txt
+  streamlit run app_cac40_streamlit.py
+
+  
+## Déploiement
+Déployable gratuitement sur [Streamlit Cloud](https://streamlit.io/cloud)
+
+
 
