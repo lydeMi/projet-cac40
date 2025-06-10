@@ -8,18 +8,153 @@ from plotly.subplots import make_subplots
 import time
 import numpy as np
 
+# --- Configuration de la page ---
 st.set_page_config(page_title="CAC40 Viewer", layout="wide")
-st.title("Application de Suivi Boursier - CAC 40")
 
-# --- CSS pour masquer le menu et les icônes Streamlit ---
-hide_streamlit_style = """
+# --- CSS Personnalisé pour le design de l'interface ---
+st.markdown("""
     <style>
+    /* Masquer le menu hamburger, le pied de page et l'en-tête de Streamlit */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
+
+    /* Importation d'une police Google Font (facultatif, mais recommandé pour un meilleur rendu) */
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap');
+
+    body {
+        font-family: 'Roboto', sans-serif; /* Appliquer la police à tout le corps */
+        background-color: #f0f2f6; /* Un gris très clair pour le fond */
+        color: #333333; /* Couleur du texte principal */
+    }
+
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Lato', sans-serif; /* Une police différente pour les titres */
+        color: #1a2e4d; /* Une couleur bleu foncé pour les titres */
+        padding-top: 10px;
+        padding-bottom: 5px;
+    }
+
+    /* Style du titre principal */
+    .stApp > header {
+        background-color: #f0f2f6; /* S'assurer que l'en-tête Streamlit (même s'il est masqué) n'interfère pas */
+    }
+    .css-18e3th9 { /* Cible le bloc principal de contenu */
+        padding-top: 2rem;
+        padding-right: 2rem;
+        padding-left: 2rem;
+        padding-bottom: 2rem;
+    }
+
+    /* Conteneurs et onglets */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 20px; /* Espace entre les onglets */
+        margin-bottom: 20px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px 8px 0 0;
+        height: 50px;
+        width: 180px; /* Largeur des onglets */
+        background-color: #e0e6ed; /* Couleur de fond des onglets inactifs */
+        font-size: 1.1em;
+        color: #555555;
+        font-weight: bold;
+        text-transform: uppercase;
+        margin: 0;
+        padding: 0 20px;
+        border: 1px solid #c8d3e2;
+        border-bottom: none; /* Pas de bordure en bas pour les onglets */
+        transition: background-color 0.3s, color 0.3s;
+    }
+
+    .stTabs [data-baseweb="tab"]:hover {
+        background-color: #d1d9e2; /* Couleur au survol */
+        color: #333333;
+    }
+
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        background-color: #ffffff; /* Fond de l'onglet actif */
+        color: #007bff; /* Couleur du texte de l'onglet actif (bleu vif) */
+        border-top: 3px solid #007bff; /* Bordure supérieure pour l'onglet actif */
+        border-left: 1px solid #007bff;
+        border-right: 1px solid #007bff;
+        border-bottom: none;
+    }
+
+    /* Généraliser le style des blocs de contenu */
+    .stContainer, .stExpander, .stAlert {
+        background-color: #ffffff; /* Fond blanc pour les blocs de contenu */
+        border-radius: 10px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05); /* Ombre légère */
+        padding: 20px;
+        margin-bottom: 25px;
+        border: 1px solid #e0e6ed; /* Bordure subtile */
+    }
+
+    /* Style des boutons */
+    .stButton > button {
+        background-color: #007bff; /* Bleu vif pour le bouton */
+        color: white;
+        border-radius: 8px;
+        border: none;
+        padding: 10px 20px;
+        font-size: 1em;
+        font-weight: bold;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        transition: background-color 0.3s, transform 0.2s;
+    }
+    .stButton > button:hover {
+        background-color: #0056b3; /* Bleu plus foncé au survol */
+        transform: translateY(-2px); /* Léger effet de soulèvement */
+    }
+
+    /* Multiselect et Selectbox */
+    .stMultiSelect, .stSelectbox {
+        margin-bottom: 15px;
+    }
+    .stMultiSelect > div > div > div > div, .stSelectbox > div > div > div {
+        border-radius: 8px;
+        border: 1px solid #c8d3e2;
+        box-shadow: none; /* Enlever l'ombre par défaut */
+    }
+
+    /* Dataframe */
+    .stDataFrame {
+        border-radius: 10px;
+        overflow: hidden; /* Assure que les coins arrondis fonctionnent avec le tableau */
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    /* Style pour les messages d'info/success/warning */
+    .stAlert.info {
+        background-color: #e6f7ff; /* Bleu très clair */
+        color: #0056b3;
+        border: 1px solid #91d5ff;
+        border-radius: 8px;
+    }
+    .stAlert.success {
+        background-color: #f6ffed; /* Vert très clair */
+        color: #389e0d;
+        border: 1px solid #b7eb8f;
+        border-radius: 8px;
+    }
+    .stAlert.warning {
+        background-color: #fffbe6; /* Jaune très clair */
+        color: #d46b08;
+        border: 1px solid #ffe58f;
+        border-radius: 8px;
+    }
+
+    /* Progress bar (optionnel, si vous utilisez st.progress) */
+    .stProgress > div > div > div > div {
+        background-color: #007bff; /* Couleur de la barre de progression */
+    }
+
     </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
+
+
+st.title("Application de Suivi Boursier - CAC 40")
 
 # --- Gestion de la liste des tickers CAC 40 ---
 if 'tickers_dict' not in st.session_state:
@@ -152,7 +287,7 @@ with tab1:
             st.warning("Aucune donnée du CAC 40 n'a pu être récupérée pour les entreprises sélectionnées. Vérifiez les tickers ou réessayez plus tard.")
 
     if 'full_df' in st.session_state and not st.session_state['full_df'].empty:
-        st.markdown("---")
+        st.markdown("<hr style='border:1px solid #e0e6ed; margin-top:30px; margin-bottom:30px;'>", unsafe_allow_html=True)
         st.subheader("Résumé des données agrégées")
         st.write(f"Nombre total de lignes dans le DataFrame final : **{len(st.session_state['full_df'])}**")
         st.write("Distribution des tickers dans le DataFrame final :")
@@ -161,6 +296,7 @@ with tab1:
         with st.expander("Aperçu des premières lignes du DataFrame final"):
             st.dataframe(st.session_state['full_df'].head(20)) 
 
+        st.markdown("<hr style='border:1px solid #e0e6ed; margin-top:30px; margin-bottom:30px;'>", unsafe_allow_html=True)
         st.subheader("Graphiques Détaillés")
         if st.session_state['data_by_ticker']:
             ticker_display_names_map = {v: k for k, v in tickers_dict.items()}
@@ -232,8 +368,8 @@ with tab2:
         
         st.dataframe(df_cac40_list, use_container_width=True)
 
-        st.markdown("---")
-        st.subheader("Accès aux données récentes du CAC 40")
+        st.markdown("<hr style='border:1px solid #e0e6ed; margin-top:30px; margin-bottom:30px;'>", unsafe_allow_html=True)
+        st.subheader("Accès aux données récentes de l'indice CAC 40")
         
         st.info("Vous pouvez visualiser le cours de l'indice CAC 40 (`^FCHI`) ci-dessous pour la période sélectionnée.")
         if st.button("Afficher le graphique de l'indice CAC 40", key="show_cac40_index_chart"):
