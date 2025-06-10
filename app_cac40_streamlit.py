@@ -2,7 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 from datetime import datetime
-from get_cac40_tickers import get_cac40_tickers # Assurez-vous que ce fichier est bien présent
+from get_cac40_tickers import get_cac40_tickers
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
@@ -10,6 +10,16 @@ import numpy as np
 
 st.set_page_config(page_title="CAC40 Viewer", layout="wide")
 st.title("Application de Suivi Boursier - CAC 40")
+
+# --- CSS pour masquer le menu et les icônes Streamlit ---
+hide_streamlit_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # --- Gestion de la liste des tickers CAC 40 ---
 if 'tickers_dict' not in st.session_state:
@@ -42,22 +52,17 @@ with tab1:
 
     @st.cache_data(ttl=3600)
     def get_ticker_data(ticker_symbol, period):
-        # Logique pour déterminer l'intervalle approprié en fonction de la période
         if period == "1d":
             interval_val = "1m"
         elif period == "5d":
             interval_val = "1m"
         elif period in ["1mo", "3mo"]:
-            interval_val = "5m" # '5m' souvent disponible pour 1-3 mois
+            interval_val = "5m"
         elif period in ["6mo", "1y"]:
-            interval_val = "1h" # '1h' souvent disponible pour 6 mois à 1 an
-        else: # Pour les périodes plus longues (2y, 5y, 10y, ytd, max)
-            interval_val = "1d" # '1d' est le plus fiable pour les très longues périodes
+            interval_val = "1h"
+        else:
+            interval_val = "1d"
         
-        # Yahoo Finance peut parfois retourner des df vides ou des erreurs
-        # si l'intervalle demandé n'est pas valide pour une période donnée.
-        # Ici, nous utilisons les intervalles les plus communs.
-
         data = yf.download(ticker_symbol, period=period, interval=interval_val, progress=False)
         return data
 
@@ -81,21 +86,18 @@ with tab1:
                 print(f"DEBUG_LOG: Tentative de collecte pour {ticker_symbol} (étape {i+1}/{len(tickers_symbols_to_collect)}).")
 
                 try:
-                    data = get_ticker_data(ticker_symbol, selected_period) # Utilisation de la fonction avec cache
+                    data = get_ticker_data(ticker_symbol, selected_period)
 
                     if not data.empty:
-                        # Gérer le cas où Datetime est l'index
                         if 'Datetime' not in data.columns and isinstance(data.index, pd.DatetimeIndex):
                             data = data.reset_index()
                             data = data.rename(columns={'index': 'Datetime'})
                         
-                        # Gestion des Timezones (conversion en timezone naive)
                         if 'Datetime' in data.columns and data['Datetime'].dtype == 'datetime64[ns, UTC]':
                             data['Datetime'] = data['Datetime'].dt.tz_localize(None)
                         
                         data["Ticker"] = ticker_symbol
                         
-                        # Harmonisation des noms de colonnes
                         if isinstance(data.columns, pd.MultiIndex):
                             new_columns = []
                             for col_tuple in data.columns:
@@ -237,19 +239,17 @@ with tab2:
         if st.button("Afficher le graphique de l'indice CAC 40", key="show_cac40_index_chart"):
             with st.spinner(f"Récupération des données de l'indice CAC 40 pour la période '{selected_period}'..."):
                 try:
-                    index_data = get_ticker_data('^FCHI', selected_period) # Utilisation de la fonction avec cache
+                    index_data = get_ticker_data('^FCHI', selected_period)
                     if not index_data.empty:
-                        # Gérer le cas où Datetime est l'index pour l'indice également
                         if 'Datetime' not in index_data.columns and isinstance(index_data.index, pd.DatetimeIndex):
                             index_data = index_data.reset_index()
                             index_data = index_data.rename(columns={'index': 'Datetime'})
                         
-                        # Gestion des Timezones (conversion en timezone naive) pour l'indice
                         if 'Datetime' in index_data.columns and index_data['Datetime'].dtype == 'datetime64[ns, UTC]':
                             index_data['Datetime'] = index_data['Datetime'].dt.tz_localize(None)
 
                         fig_index = go.Figure(data=[go.Candlestick(
-                            x=index_data['Datetime'], # Utiliser la colonne Datetime
+                            x=index_data['Datetime'],
                             open=index_data['Open'],
                             high=index_data['High'],
                             low=index_data['Low'],
