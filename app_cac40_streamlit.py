@@ -348,7 +348,7 @@ with tab1:
 
         csv = st.session_state['full_df'].to_csv(index=False).encode("utf-8")
         st.download_button(
-            "💾 Télécharger CSV",
+            "Télécharger CSV",
             csv,
             f"cac40_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             key="main_csv_download"
@@ -408,7 +408,7 @@ with tab2:
         
         csv_cac40_list = df_cac40_list.to_csv(index=False).encode("utf-8")
         st.download_button(
-            "💾 Télécharger la liste complète du CAC 40 (CSV)",
+            "Télécharger la liste complète du CAC 40 (CSV)",
             csv_cac40_list,
             f"cac40_liste_{datetime.now().strftime('%Y%m%d')}.csv",
             key="download_cac40_list"
