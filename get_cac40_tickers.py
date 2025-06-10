@@ -1,83 +1,67 @@
-import requests
-from bs4 import BeautifulSoup
-import yfinance as yf
-import time
 import streamlit as st
+import yfinance as yf
+import time # Gardé au cas où vous le réutilisiez ou pour de futurs délais
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400) # Le cache est toujours utile pour ne pas recréer le dictionnaire à chaque fois
 def get_cac40_tickers():
-    # URL pour la composition du CAC 40 sur Investing.com
-    url = "https://fr.investing.com/indices/france-40-components"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+    # Liste manuelle des entreprises du CAC 40 et de leurs tickers Yahoo Finance
+    # Cette liste est à mettre à jour si la composition du CAC 40 change.
+    cac40_list = {
+        "Accor": "AC.PA",
+        "Air Liquide": "AI.PA",
+        "Airbus": "AIR.PA",
+        "ArcelorMittal": "MT.AS", # Ou MT.PA si elle est aussi listée à Paris pour Yahoo Finance
+        "Axa": "CS.PA",
+        "BNP Paribas": "BNP.PA",
+        "Bouygues": "EN.PA",
+        "Capgemini": "CAP.PA",
+        "Carrefour": "CA.PA",
+        "Crédit Agricole": "ACA.PA",
+        "Danone": "BN.PA",
+        "Dassault Systèmes": "DSY.PA",
+        "Edenred": "EDEN.PA",
+        "Engie": "ENGI.PA",
+        "EssilorLuxottica": "EL.PA",
+        "Eurofins Scientific": "ERF.PA",
+        "Hermès International": "RMS.PA",
+        "Kering": "KER.PA",
+        "Legrand": "LR.PA",
+        "L'Oréal": "OR.PA",
+        "LVMH": "MC.PA",
+        "Michelin": "ML.PA",
+        "Orange": "ORA.PA",
+        "Pernod Ricard": "RI.PA",
+        "Publicis Groupe": "PUB.PA",
+        "Renault": "RNO.PA",
+        "Safran": "SAF.PA",
+        "Saint-Gobain": "SGO.PA",
+        "Sanofi": "SAN.PA",
+        "Schneider Electric": "SU.PA",
+        "Société Générale": "GLE.PA",
+        "Stellantis": "STLAP.PA", # ou STLA pour NYSE, vérifiez celle qui fonctionne le mieux
+        "STMICROELECTRONICS": "STM.PA",
+        "Teleperformance": "TEP.PA",
+        "Thales": "HO.PA",
+        "TotalEnergies": "TTE.PA",
+        "Unibail-Rodamco-Westfield": "URW.AS", # ou URW.PA, vérifiez celle qui fonctionne le mieux
+        "Veolia Environnement": "VIE.PA",
+        "Vinci": "DG.PA",
+        "Vivendi": "VIV.PA" # Si elle est au CAC 40
+    }
 
-    try:
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Erreur lors de la récupération de la page Investing.com : {e}")
-        return {}
+    # Pour une validation optionnelle avec yfinance (non nécessaire si la liste est fiable)
+    # tickers_dict = {}
+    # for name, ticker in cac40_list.items():
+    #     try:
+    #         info = yf.Ticker(ticker).info
+    #         if "longName" in info:
+    #             tickers_dict[info["longName"]] = ticker
+    #         else:
+    #             tickers_dict[name] = ticker # Utilise le nom manuel si yfinance ne donne pas de longName
+    #     except Exception:
+    #         st.warning(f"Le ticker {ticker} pour {name} n'a pas pu être validé par yfinance.")
+    #         tickers_dict[name] = ticker # Ajoute le ticker même si yfinance échoue
+    #     time.sleep(0.1) # Petit délai pour yfinance si cette boucle est activée
 
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    # La table sur Investing.com n'a pas toujours une classe ou un ID stable,
-    # mais elle a l'attribut 'role="grid"'. C'est ce qu'on va utiliser.
-    table = soup.find("table", {"role": "grid"})
-
-    tickers_dict = {}
-    if table:
-        # Les lignes de données sont dans le tbody, et on saute la première ligne (l'en-tête)
-        rows = table.find("tbody").find_all("tr") if table.find("tbody") else []
-
-        for row in rows:
-            cols = row.find_all("td")
-            if len(cols) >= 2: # On a besoin d'au moins 2 colonnes pour le nom et le symbole
-                # Le nom de l'entreprise est dans la première colonne (index 0)
-                name = cols[0].get_text(strip=True)
-
-                # Le symbole (ticker) est dans la deuxième colonne (index 1)
-                # Il est au format "DD/MM |TICKER". On doit extraire le TICKER.
-                ticker_raw = cols[1].get_text(strip=True)
-                if '|' in ticker_raw:
-                    guess_ticker = ticker_raw.split('|')[1].strip()
-                else:
-                    guess_ticker = ticker_raw.strip() # Fallback si le format change
-
-                if name and guess_ticker:
-                    # Pour Investing.com, les tickers sont parfois sans le suffixe ".PA".
-                    # On va essayer d'ajouter le suffixe ".PA" si nécessaire.
-                    final_ticker = ""
-                    if not guess_ticker.endswith(".PA") and not "." in guess_ticker:
-                        test_ticker_pa = guess_ticker + ".PA"
-                    else:
-                        test_ticker_pa = guess_ticker # Utilise le ticker tel quel
-
-                    try:
-                        # On essaie le ticker avec .PA d'abord
-                        info = yf.Ticker(test_ticker_pa).info
-                        if "longName" in info:
-                            tickers_dict[info["longName"]] = test_ticker_pa
-                            final_ticker = test_ticker_pa
-                        else:
-                            # Si .PA ne donne rien, on essaie le ticker original sans .PA
-                            info = yf.Ticker(guess_ticker).info
-                            if "longName" in info:
-                                tickers_dict[info["longName"]] = guess_ticker
-                                final_ticker = guess_ticker
-                            else:
-                                # Si aucune des tentatives ne marche, on l'ajoute avec le nom trouvé et le ticker original
-                                if guess_ticker:
-                                    tickers_dict[name] = guess_ticker
-                                    final_ticker = guess_ticker
-                    except Exception as e:
-                        # Si yfinance échoue, on peut choisir d'ajouter le nom et le ticker trouvé ou l'ignorer
-                        if guess_ticker:
-                            tickers_dict[name] = guess_ticker # Ajoute le ticker trouvé même sans validation yfinance
-                        # st.warning(f"Impossible de valider {guess_ticker} pour {name} avec yfinance : {e}")
-                        pass # Ignore les tickers qui ne peuvent pas être validés par yfinance
-
-                    if final_ticker: # Introduit un délai seulement si un ticker a été traité avec succès
-                        time.sleep(0.5) # Délai pour éviter le blocage par yfinance
-    else:
-        st.error("Table de composition du CAC 40 introuvable sur la page Investing.com. La structure du site a peut-être changé (attribut 'role=\"grid\"' ou structure tbody/tr/td).")
-
-    return tickers_dict
+    # Puisque la liste est manuelle et a été vérifiée, on peut la retourner directement
+    return cac40_list
