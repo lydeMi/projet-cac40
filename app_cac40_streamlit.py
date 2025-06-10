@@ -319,14 +319,7 @@ def format_number(num, prefix="", suffix=""):
     else:
         return f"{prefix}{num:.2f}{suffix}"
 
-def format_percentage(value, decimals=2):
-    """Formate un pourcentage avec couleur"""
-    if pd.isna(value):
-        return "N/A"
-    
-    color = "green" if value >= 0 else "red"
-    sign = "+" if value >= 0 else ""
-    return f"<span style='color: {color}; font-weight: 600;'>{sign}{value:.{decimals}f}%</span>"
+# Suppression de la fonction format_percentage car sa logique est désormais intégrée au styler de Pandas.
 
 def get_ticker_data_enhanced(ticker_symbol, period):
     """Collecte de données améliorée avec gestion d'erreurs et informations supplémentaires"""
@@ -929,7 +922,7 @@ with tab2:
                     'Secteur': sector,
                     'Dernier Prix': latest_data['Close'] if 'Close' in latest_data else np.nan,
                     'Changement': price_change,
-                    'Changement %': percentage_change,
+                    'Changement %': percentage_change, # Garder en numérique pour le styler
                     'Volume Moyen': df_val['Volume'].mean() if 'Volume' in df_val.columns else np.nan,
                     'Capitalisation Boursière': market_cap,
                     'Devise': currency,
@@ -939,22 +932,34 @@ with tab2:
         if overview_data:
             df_overview = pd.DataFrame(overview_data)
             
-            # Formattage des colonnes numériques pour l'affichage
-            df_overview['Dernier Prix'] = df_overview['Dernier Prix'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
-            df_overview['Changement'] = df_overview['Changement'].apply(lambda x: f"{x:+.2f}" if pd.notna(x) else "N/A")
-            df_overview['Changement %'] = df_overview['Changement %'].apply(lambda x: format_percentage(x))
-            df_overview['Volume Moyen'] = df_overview['Volume Moyen'].apply(lambda x: format_number(x, suffix="") if pd.notna(x) else "N/A")
-            
             # Special handling for Market_Cap as it depends on Currency
             df_overview['Capitalisation Boursière Display'] = df_overview.apply(
                 lambda row: format_number(row['Capitalisation Boursière'], suffix=f" {row['Devise']}" if pd.notna(row['Capitalisation Boursière']) else ""), axis=1
             )
             
             st.subheader("Résumé des Performances")
-            # Display DataFrame with HTML formatting for percentage
             # Select columns to display, hiding raw Market_Cap and Devise
             display_cols = [col for col in df_overview.columns if col not in ['Capitalisation Boursière', 'Devise']]
-            st.dataframe(df_overview[display_cols].to_html(escape=False, index=False), use_container_width=True, height=500)
+            
+            # --- Utilisation de Pandas Styler pour le formatage et le style ---
+            styled_df_to_display = df_overview[display_cols].style \
+                .applymap(
+                    lambda x: f"color: {'green' if x >= 0 else 'red'}; font-weight: 600;",
+                    subset=['Changement %']
+                ) \
+                .format(
+                    {
+                        'Dernier Prix': "{:.2f}",
+                        'Changement': "{:+.2f}",
+                        'Changement %': "{:+.2f}%",
+                        'Volume Moyen': lambda x: format_number(x, suffix=""),
+                        'Capitalisation Boursière Display': "{}"
+                    }, 
+                    na_rep="N/A"
+                )
+
+            st.dataframe(styled_df_to_display, use_container_width=True, height=500)
+            # --- Fin de l'utilisation de Pandas Styler ---
             
             st.markdown("---")
             
