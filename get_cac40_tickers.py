@@ -6,89 +6,78 @@ import streamlit as st
 
 @st.cache_data(ttl=86400)
 def get_cac40_tickers():
-    # Nouvelle URL pour la composition du CAC 40 sur Investing.com
+    # URL pour la composition du CAC 40 sur Investing.com
     url = "https://fr.investing.com/indices/france-40-components"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"} # Un User-Agent plus complet peut aider
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
 
     try:
-        response = requests.get(url, headers=headers, timeout=15) # Augmente le timeout
-        response.raise_for_status() # Lève une exception pour les codes d'état HTTP d'erreur
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
     except requests.exceptions.RequestException as e:
         st.error(f"Erreur lors de la récupération de la page Investing.com : {e}")
         return {}
 
     soup = BeautifulSoup(response.text, "html.parser")
 
-    # La table des composants du CAC 40 sur Investing.com a la classe 'freeze-column-td' ou se trouve dans un div particulier.
-    # Il faut trouver la bonne table. En inspectant, elle se trouve souvent à l'intérieur d'un div avec l'ID 'recentFinancialReport'
-    # ou une structure similaire. La table elle-même a souvent la classe 'datatable_body___sKx7g'.
-    # Faisons simple et cherchons une table avec une classe qui contient 'datatable' et vérifions son contenu.
-    
-    # Tentons de trouver la table qui contient les données des composants
-    # L'ID 'recentFinancialReport' ou une classe comme 'js-top-stocks-table' sont des cibles potentielles.
-    # Après inspection des résultats de recherche, une classe 'datatable_body__xxxx' semble être utilisée pour le corps des tableaux
-    # ou une classe 'datatable'.
-    
-    # On va chercher la table par son ID 'recentFinancialReport', puis le tableau à l'intérieur
-    # Ou plus directement par une classe souvent utilisée pour les tableaux de données: 'datatable' ou 'stock_screener_body__...'.
-    
-    # Testons avec une classe générique de table pour les données
-    table = soup.find("table", {"class": "datatable_table__t_r_yP"}) # J'ai inspecté la page et c'est une classe générique pour le tableau.
-                                                                     # Cela peut changer souvent.
+    # La table sur Investing.com n'a pas toujours une classe ou un ID stable,
+    # mais elle a l'attribut 'role="grid"'. C'est ce qu'on va utiliser.
+    table = soup.find("table", {"role": "grid"})
 
     tickers_dict = {}
     if table:
-        # Les lignes de données commencent après l'en-tête, souvent la deuxième ligne
-        rows = table.find_all("tr")[1:] # On saute l'en-tête si présent
+        # Les lignes de données sont dans le tbody, et on saute la première ligne (l'en-tête)
+        rows = table.find("tbody").find_all("tr") if table.find("tbody") else []
 
         for row in rows:
             cols = row.find_all("td")
-            if len(cols) >= 2: # On a besoin d'au moins 2 colonnes pour le nom et le ticker
-                # Le nom de l'entreprise est généralement dans la première colonne (index 0)
-                # Le symbole (ticker) est généralement dans la deuxième colonne (index 1)
-                
-                # Le texte du nom de l'entreprise est souvent dans un <a> à l'intérieur du <td>
-                name_element = cols[0].find('a')
-                if name_element:
-                    name = name_element.get_text(strip=True)
-                else:
-                    name = cols[0].get_text(strip=True) # Fallback
+            if len(cols) >= 2: # On a besoin d'au moins 2 colonnes pour le nom et le symbole
+                # Le nom de l'entreprise est dans la première colonne (index 0)
+                name = cols[0].get_text(strip=True)
 
-                # Le ticker est souvent dans la deuxième colonne, directement en texte ou dans un span
-                ticker_element = cols[1]
-                guess_ticker = ticker_element.get_text(strip=True)
+                # Le symbole (ticker) est dans la deuxième colonne (index 1)
+                # Il est au format "DD/MM |TICKER". On doit extraire le TICKER.
+                ticker_raw = cols[1].get_text(strip=True)
+                if '|' in ticker_raw:
+                    guess_ticker = ticker_raw.split('|')[1].strip()
+                else:
+                    guess_ticker = ticker_raw.strip() # Fallback si le format change
 
                 if name and guess_ticker:
                     # Pour Investing.com, les tickers sont parfois sans le suffixe ".PA".
-                    # On va essayer d'ajouter le suffixe ".PA" pour les tickers qui n'en ont pas
-                    # et qui ne sont pas déjà des formats connus (comme pour les USA: MSFT, etc.)
+                    # On va essayer d'ajouter le suffixe ".PA" si nécessaire.
+                    final_ticker = ""
                     if not guess_ticker.endswith(".PA") and not "." in guess_ticker:
-                        guess_ticker_with_pa = guess_ticker + ".PA"
+                        test_ticker_pa = guess_ticker + ".PA"
                     else:
-                        guess_ticker_with_pa = guess_ticker # Utilise le ticker tel quel s'il a déjà un suffixe ou un point
+                        test_ticker_pa = guess_ticker # Utilise le ticker tel quel
 
                     try:
                         # On essaie le ticker avec .PA d'abord
-                        info = yf.Ticker(guess_ticker_with_pa).info
+                        info = yf.Ticker(test_ticker_pa).info
                         if "longName" in info:
-                            tickers_dict[info["longName"]] = guess_ticker_with_pa
+                            tickers_dict[info["longName"]] = test_ticker_pa
+                            final_ticker = test_ticker_pa
                         else:
-                            # Si .PA ne donne rien, on essaie le ticker original
+                            # Si .PA ne donne rien, on essaie le ticker original sans .PA
                             info = yf.Ticker(guess_ticker).info
                             if "longName" in info:
                                 tickers_dict[info["longName"]] = guess_ticker
+                                final_ticker = guess_ticker
                             else:
-                                # Si aucune des tentatives ne marche, on l'ajoute avec le nom trouvé
-                                tickers_dict[name] = guess_ticker
+                                # Si aucune des tentatives ne marche, on l'ajoute avec le nom trouvé et le ticker original
+                                if guess_ticker:
+                                    tickers_dict[name] = guess_ticker
+                                    final_ticker = guess_ticker
                     except Exception as e:
                         # Si yfinance échoue, on peut choisir d'ajouter le nom et le ticker trouvé ou l'ignorer
-                        # Pour ne pas bloquer l'appli, on peut l'ajouter tel quel même sans validation yfinance
+                        if guess_ticker:
+                            tickers_dict[name] = guess_ticker # Ajoute le ticker trouvé même sans validation yfinance
                         # st.warning(f"Impossible de valider {guess_ticker} pour {name} avec yfinance : {e}")
-                        if guess_ticker: # Ajouter seulement si un ticker a été trouvé
-                            tickers_dict[name] = guess_ticker
                         pass # Ignore les tickers qui ne peuvent pas être validés par yfinance
-                    time.sleep(0.5) # Délai pour éviter le blocage par yfinance
+
+                    if final_ticker: # Introduit un délai seulement si un ticker a été traité avec succès
+                        time.sleep(0.5) # Délai pour éviter le blocage par yfinance
     else:
-        st.error("Table de composition du CAC 40 introuvable sur la page Investing.com. La structure du site a peut-être changé.")
+        st.error("Table de composition du CAC 40 introuvable sur la page Investing.com. La structure du site a peut-être changé (attribut 'role=\"grid\"' ou structure tbody/tr/td).")
 
     return tickers_dict
