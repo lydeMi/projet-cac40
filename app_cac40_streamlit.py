@@ -1,417 +1,719 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from get_cac40_tickers import get_cac40_tickers
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import warnings
+warnings.filterwarnings('ignore')
 
 # --- Configuration de la page ---
-st.set_page_config(page_title="CAC40 Viewer", layout="wide")
+st.set_page_config(
+    page_title="CAC40 Tracker Pro", 
+    layout="wide", 
+    initial_sidebar_state="expanded",
+    page_icon="📈"
+)
 
-# --- CSS Personnalisé pour le design de l'interface ---
+# --- CSS Personnalisé avancé ---
 st.markdown("""
     <style>
-    /* Masquer le menu hamburger, le pied de page et l'en-tête de Streamlit */
+    /* Masquer les éléments Streamlit par défaut */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
 
-    /* Importation d'une police Google Font (facultatif, mais recommandé pour un meilleur rendu) */
-    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap');
+    /* Importation des polices Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-    body {
-        font-family: 'Roboto', sans-serif; /* Appliquer la police à tout le corps */
-        background-color: #f0f2f6; /* Un gris très clair pour le fond */
-        color: #333333; /* Couleur du texte principal */
+    /* Variables CSS pour cohérence */
+    :root {
+        --primary-color: #2563eb;
+        --secondary-color: #1e40af;
+        --success-color: #059669;
+        --warning-color: #d97706;
+        --error-color: #dc2626;
+        --background-color: #f8fafc;
+        --card-background: #ffffff;
+        --text-primary: #1e293b;
+        --text-secondary: #64748b;
+        --border-color: #e2e8f0;
+        --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    }
+
+    /* Style global */
+    .stApp {
+        font-family: 'Inter', sans-serif;
+        background-color: var(--background-color);
+        color: var(--text-primary);
     }
 
     h1, h2, h3, h4, h5, h6 {
-        font-family: 'Lato', sans-serif; /* Une police différente pour les titres */
-        color: #1a2e4d; /* Une couleur bleu foncé pour les titres */
-        padding-top: 10px;
-        padding-bottom: 5px;
+        font-weight: 600;
+        color: var(--text-primary);
+        letter-spacing: -0.025em;
+        margin-bottom: 1rem;
     }
 
-    /* Style du titre principal */
-    .stApp > header {
-        background-color: #f0f2f6; /* S'assurer que l'en-tête Streamlit (même s'il est masqué) n'interfère pas */
-    }
-    .css-18e3th9 { /* Cible le bloc principal de contenu */
-        padding-top: 2rem;
-        padding-right: 2rem;
-        padding-left: 2rem;
-        padding-bottom: 2rem;
+    h1 {
+        background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        font-size: 2.5rem;
+        font-weight: 700;
     }
 
-    /* Conteneurs et onglets */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 20px; /* Espace entre les onglets */
-        margin-bottom: 20px;
+    /* Conteneurs de métriques */
+    .metric-container {
+        background: var(--card-background);
+        padding: 1.5rem;
+        border-radius: 12px;
+        box-shadow: var(--shadow);
+        border: 1px solid var(--border-color);
+        text-align: center;
+        transition: all 0.2s ease;
+        height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
     }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 8px 8px 0 0;
-        height: 50px;
-        width: 180px; /* Largeur des onglets */
-        background-color: #e0e6ed; /* Couleur de fond des onglets inactifs */
-        font-size: 1.1em;
-        color: #555555;
-        font-weight: bold;
+    
+    .metric-container:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-lg);
+    }
+
+    .metric-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--primary-color);
+        font-family: 'JetBrains Mono', monospace;
+        margin-bottom: 0.5rem;
+    }
+
+    .metric-label {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
         text-transform: uppercase;
-        margin: 0;
-        padding: 0 20px;
-        border: 1px solid #c8d3e2;
-        border-bottom: none; /* Pas de bordure en bas pour les onglets */
-        transition: background-color 0.3s, color 0.3s;
+        letter-spacing: 0.05em;
+        font-weight: 500;
+    }
+
+    /* Indicateurs de statut */
+    .status-indicator {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        margin: 0.25rem 0.25rem 0.25rem 0;
+        gap: 0.5rem;
+    }
+
+    .status-success {
+        background-color: rgba(5, 150, 105, 0.1);
+        color: var(--success-color);
+        border: 1px solid rgba(5, 150, 105, 0.2);
+    }
+
+    .status-warning {
+        background-color: rgba(217, 119, 6, 0.1);
+        color: var(--warning-color);
+        border: 1px solid rgba(217, 119, 6, 0.2);
+    }
+
+    .status-error {
+        background-color: rgba(220, 38, 38, 0.1);
+        color: var(--error-color);
+        border: 1px solid rgba(220, 38, 38, 0.2);
+    }
+
+    /* Onglets améliorés */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        margin-bottom: 2rem;
+        border-bottom: 2px solid var(--border-color);
+        padding: 0;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 48px;
+        padding: 0 24px;
+        border-radius: 8px 8px 0 0;
+        background-color: transparent;
+        color: var(--text-secondary);
+        font-weight: 500;
+        border: none;
+        border-bottom: 3px solid transparent;
+        transition: all 0.2s ease;
+        font-size: 1rem;
     }
 
     .stTabs [data-baseweb="tab"]:hover {
-        background-color: #d1d9e2; /* Couleur au survol */
-        color: #333333;
+        background-color: rgba(37, 99, 235, 0.05);
+        color: var(--primary-color);
     }
 
     .stTabs [data-baseweb="tab"][aria-selected="true"] {
-        background-color: #ffffff; /* Fond de l'onglet actif */
-        color: #007bff; /* Couleur du texte de l'onglet actif (bleu vif) */
-        border-top: 3px solid #007bff; /* Bordure supérieure pour l'onglet actif */
-        border-left: 1px solid #007bff;
-        border-right: 1px solid #007bff;
-        border-bottom: none;
+        background-color: var(--card-background);
+        color: var(--primary-color);
+        border-bottom: 3px solid var(--primary-color);
+        font-weight: 600;
+        box-shadow: var(--shadow);
     }
 
-    /* Généraliser le style des blocs de contenu */
-    .stContainer, .stExpander, .stAlert {
-        background-color: #ffffff; /* Fond blanc pour les blocs de contenu */
-        border-radius: 10px;
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05); /* Ombre légère */
-        padding: 20px;
-        margin-bottom: 25px;
-        border: 1px solid #e0e6ed; /* Bordure subtile */
-    }
-
-    /* Style des boutons */
+    /* Boutons améliorés */
     .stButton > button {
-        background-color: #007bff; /* Bleu vif pour le bouton */
+        background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
         color: white;
-        border-radius: 8px;
         border: none;
-        padding: 10px 20px;
-        font-size: 1em;
-        font-weight: bold;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        transition: background-color 0.3s, transform 0.2s;
+        border-radius: 8px;
+        padding: 0.75rem 1.5rem;
+        font-weight: 500;
+        box-shadow: var(--shadow);
+        transition: all 0.2s ease;
+        font-family: 'Inter', sans-serif;
+        font-size: 0.95rem;
     }
+    
     .stButton > button:hover {
-        background-color: #0056b3; /* Bleu plus foncé au survol */
-        transform: translateY(-2px); /* Léger effet de soulèvement */
+        transform: translateY(-1px);
+        box-shadow: 0 8px 16px -4px rgba(37, 99, 235, 0.3);
     }
 
-    /* Multiselect et Selectbox */
-    .stMultiSelect, .stSelectbox {
-        margin-bottom: 15px;
-    }
-    .stMultiSelect > div > div > div > div, .stSelectbox > div > div > div {
-        border-radius: 8px;
-        border: 1px solid #c8d3e2;
-        box-shadow: none; /* Enlever l'ombre par défaut */
+    .stButton > button:active {
+        transform: translateY(0);
     }
 
-    /* Dataframe */
-    .stDataFrame {
-        border-radius: 10px;
-        overflow: hidden; /* Assure que les coins arrondis fonctionnent avec le tableau */
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-    }
-    /* Style pour les messages d'info/success/warning */
-    .stAlert.info {
-        background-color: #e6f7ff; /* Bleu très clair */
-        color: #0056b3;
-        border: 1px solid #91d5ff;
-        border-radius: 8px;
-    }
-    .stAlert.success {
-        background-color: #f6ffed; /* Vert très clair */
-        color: #389e0d;
-        border: 1px solid #b7eb8f;
-        border-radius: 8px;
-    }
-    .stAlert.warning {
-        background-color: #fffbe6; /* Jaune très clair */
-        color: #d46b08;
-        border: 1px solid #ffe58f;
-        border-radius: 8px;
+    /* Conteneurs personnalisés */
+    .custom-container {
+        background: var(--card-background);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        box-shadow: var(--shadow);
+        border: 1px solid var(--border-color);
     }
 
-    /* Progress bar (optionnel, si vous utilisez st.progress) */
+    .info-card {
+        background: linear-gradient(135deg, rgba(37, 99, 235, 0.05), rgba(30, 64, 175, 0.05));
+        border: 1px solid rgba(37, 99, 235, 0.2);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+    }
+
+    /* Indicateurs de qualité des données */
+    .data-quality-excellent { color: var(--success-color); font-weight: 700; }
+    .data-quality-good { color: #16a34a; font-weight: 600; }
+    .data-quality-medium { color: var(--warning-color); font-weight: 600; }
+    .data-quality-poor { color: var(--error-color); font-weight: 600; }
+
+    /* Sidebar personnalisée */
+    .css-1d391kg {
+        background-color: var(--card-background);
+        border-right: 1px solid var(--border-color);
+    }
+
+    /* Selectbox et Multiselect */
+    .stSelectbox > div > div > div, .stMultiSelect > div > div > div {
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        transition: all 0.2s ease;
+    }
+
+    .stSelectbox > div > div > div:focus-within, .stMultiSelect > div > div > div:focus-within {
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    /* Animation de chargement */
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+    }
+    
+    .loading-pulse {
+        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    /* Progress bar */
     .stProgress > div > div > div > div {
-        background-color: #007bff; /* Couleur de la barre de progression */
+        background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+        border-radius: 4px;
     }
 
+    /* Alertes personnalisées */
+    .stAlert > div {
+        border-radius: 8px;
+        border: 1px solid;
+        font-weight: 500;
+    }
+
+    /* DataFrames */
+    .stDataFrame {
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: var(--shadow);
+        border: 1px solid var(--border-color);
+    }
+
+    /* Text inputs */
+    .stTextInput > div > div > input {
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        transition: all 0.2s ease;
+    }
+
+    .stTextInput > div > div > input:focus {
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
     </style>
 """, unsafe_allow_html=True)
 
+# --- Fonctions Utilitaires ---
+def calculate_data_quality(df):
+    """Calcule la qualité des données basée sur la complétude et la fraîcheur"""
+    if df.empty:
+        return 0, "Aucune donnée", "data-quality-poor"
+    
+    # Calcul de la complétude
+    total_cells = len(df) * len(df.columns)
+    missing_cells = df.isnull().sum().sum()
+    completeness = ((total_cells - missing_cells) / total_cells) * 100
+    
+    # Classification de la qualité
+    if completeness >= 98:
+        return completeness, "Excellente", "data-quality-excellent"
+    elif completeness >= 90:
+        return completeness, "Bonne", "data-quality-good"
+    elif completeness >= 70:
+        return completeness, "Moyenne", "data-quality-medium"
+    else:
+        return completeness, "Faible", "data-quality-poor"
 
-st.title("Application de Suivi Boursier - CAC 40")
+def format_number(num, prefix="", suffix=""):
+    """Formate les grands nombres avec des suffixes appropriés"""
+    if pd.isna(num) or num is None:
+        return "N/A"
+    
+    if abs(num) >= 1e9:
+        return f"{prefix}{num/1e9:.2f}Md{suffix}"
+    elif abs(num) >= 1e6:
+        return f"{prefix}{num/1e6:.2f}M{suffix}"
+    elif abs(num) >= 1e3:
+        return f"{prefix}{num/1e3:.2f}K{suffix}"
+    else:
+        return f"{prefix}{num:.2f}{suffix}"
 
-# --- Gestion de la liste des tickers CAC 40 ---
-if 'tickers_dict' not in st.session_state:
-    st.session_state['tickers_dict'] = get_cac40_tickers()
+def format_percentage(value, decimals=2):
+    """Formate un pourcentage avec couleur"""
+    if pd.isna(value):
+        return "N/A"
+    
+    color = "green" if value >= 0 else "red"
+    sign = "+" if value >= 0 else ""
+    return f"<span style='color: {color}; font-weight: 600;'>{sign}{value:.{decimals}f}%</span>"
 
-if st.button("Rafraîchir la liste CAC 40", key="refresh_tickers_button"):
-    st.session_state['tickers_dict'] = get_cac40_tickers()
-    st.success("Liste du CAC 40 rafraîchie avec succès !")
-
-tickers_dict = st.session_state.get('tickers_dict')
-
-# --- Utilisation des onglets ---
-tab1, tab2 = st.tabs(["Suivi en temps réel", "Visualisation du CAC 40"])
-
-# --- Contenu du Premier Onglet : Suivi en temps réel ---
-with tab1:
-    st.header("Suivi en temps réel – Données Intraday")
-
-    period_options = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
-    selected_period = st.selectbox("Période des données :", period_options, index=0, key="period_selectbox")
-
-    selected_companies = st.multiselect(
-        "Sélectionne les entreprises à surveiller :",
-        list(tickers_dict.keys()),
-        default=list(tickers_dict.keys())[:5],
-        key="multiselect_companies"
-    )
-
-    collection_status_placeholder = st.empty()
-
-    @st.cache_data(ttl=3600)
-    def get_ticker_data(ticker_symbol, period):
-        if period == "1d":
-            interval_val = "1m"
-        elif period == "5d":
-            interval_val = "1m"
-        elif period in ["1mo", "3mo"]:
-            interval_val = "5m"
-        elif period in ["6mo", "1y"]:
-            interval_val = "1h"
-        else:
-            interval_val = "1d"
+def get_ticker_data_enhanced(ticker_symbol, period):
+    """Collecte de données améliorée avec gestion d'erreurs et informations supplémentaires"""
+    try:
+        # Mapping des intervalles optimaux
+        interval_mapping = {
+            "1d": "2m", "5d": "5m", "1mo": "30m", 
+            "3mo": "1h", "6mo": "1d", "1y": "1d",
+            "2y": "1wk", "5y": "1wk", "10y": "1mo", 
+            "ytd": "1d", "max": "1mo"
+        }
+        interval_val = interval_mapping.get(period, "1d")
         
-        data = yf.download(ticker_symbol, period=period, interval=interval_val, progress=False)
-        return data
-
-    if st.button("Lancer la collecte des données", key="launch_collection_button"):
-        tickers_symbols_to_collect = [tickers_dict[name] for name in selected_companies]
+        # Création de l'objet ticker
+        ticker = yf.Ticker(ticker_symbol)
         
-        collected_dfs = [] 
-        data_by_ticker = {} 
-
-        collection_status_placeholder.info(f"Début de la collecte pour {len(tickers_symbols_to_collect)} tickers...")
-        print(f"DEBUG_LOG: Début de la collecte pour {len(tickers_symbols_to_collect)} tickers.")
-
-        EXPECTED_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Volume', 'Ticker']
-
-        with st.spinner("Téléchargement des données en cours... Veuillez patienter."):
-            for i, ticker_symbol in enumerate(tickers_symbols_to_collect):
-                company_name = [name for name, symbol in tickers_dict.items() if symbol == ticker_symbol]
-                company_display_name = company_name[0] if company_name else ticker_symbol
-                
-                st.write(f"Collecte des données pour : **{company_display_name} ({ticker_symbol})** ({i+1}/{len(tickers_symbols_to_collect)})")
-                print(f"DEBUG_LOG: Tentative de collecte pour {ticker_symbol} (étape {i+1}/{len(tickers_symbols_to_collect)}).")
-
-                try:
-                    data = get_ticker_data(ticker_symbol, selected_period)
-
-                    if not data.empty:
-                        if 'Datetime' not in data.columns and isinstance(data.index, pd.DatetimeIndex):
-                            data = data.reset_index()
-                            data = data.rename(columns={'index': 'Datetime'})
-                        
-                        if 'Datetime' in data.columns and data['Datetime'].dtype == 'datetime64[ns, UTC]':
-                            data['Datetime'] = data['Datetime'].dt.tz_localize(None)
-                        
-                        data["Ticker"] = ticker_symbol
-                        
-                        if isinstance(data.columns, pd.MultiIndex):
-                            new_columns = []
-                            for col_tuple in data.columns:
-                                col_name = col_tuple[0] if isinstance(col_tuple, tuple) else col_tuple
-                                new_columns.append(col_name.capitalize() if col_name != 'Datetime' else col_name)
-                            data.columns = new_columns
-                        else:
-                            data.columns = [col.capitalize() if col != 'Datetime' else col for col in data.columns]
-                        
-                        processed_data_columns = ['Datetime'] + [col for col in EXPECTED_COLUMNS if col != 'Ticker'] + ['Ticker']
-                        processed_data = pd.DataFrame(columns=processed_data_columns)
-                        
-                        for col in processed_data_columns:
-                            if col in data.columns:
-                                processed_data[col] = data[col]
-                            else:
-                                processed_data[col] = np.nan 
-                                if col != 'Ticker':
-                                    st.warning(f"La colonne '{col}' est manquante pour {ticker_symbol} et a été ajoutée avec des valeurs vides.")
-
-                        processed_data = processed_data[processed_data_columns]
-
-                        collected_dfs.append(processed_data)
-                        data_by_ticker[ticker_symbol] = processed_data 
-
-                        with st.expander(f"Détails de {company_display_name} ({ticker_symbol})"):
-                            st.success(f"{company_display_name} ({ticker_symbol}) collecté avec succès. {len(processed_data)} lignes.")
-                            st.dataframe(processed_data.head())
-                        print(f"DEBUG_LOG: {ticker_symbol} - Données récupérées, {len(processed_data)} lignes.")
-                    else:
-                        st.warning(f"Aucune donnée récupérée pour {company_display_name} ({ticker_symbol}). Le DataFrame est vide.")
-                        print(f"DEBUG_LOG: DataFrame vide pour {ticker_symbol} après yf.download.")
-
-                except Exception as e:
-                    st.error(f"Erreur lors de la collecte pour {company_display_name} ({ticker_symbol}) : {e}")
-                    print(f"DEBUG_LOG: Erreur pour {ticker_symbol}: {e}")
-
-                time.sleep(0.5)
-
-        collection_status_placeholder.empty()
-        st.info(f"Fin de la collecte. {len(collected_dfs)} DataFrames valides collectés.")
-        print(f"DEBUG_LOG: Fin de la boucle de collecte. {len(collected_dfs)} DataFrames validés.")
-
-        if collected_dfs:
-            df_final = pd.concat(collected_dfs, ignore_index=True)
-            st.session_state['full_df'] = df_final 
-            st.session_state['data_by_ticker'] = data_by_ticker 
-            st.success("Données du CAC 40 chargées et agrégées avec succès !")
-        else:
-            st.session_state['full_df'] = pd.DataFrame() 
-            st.session_state['data_by_ticker'] = {}
-            st.warning("Aucune donnée du CAC 40 n'a pu être récupérée pour les entreprises sélectionnées. Vérifiez les tickers ou réessayez plus tard.")
-
-    if 'full_df' in st.session_state and not st.session_state['full_df'].empty:
-        st.markdown("<hr style='border:1px solid #e0e6ed; margin-top:30px; margin-bottom:30px;'>", unsafe_allow_html=True)
-        st.subheader("Résumé des données agrégées")
-        st.write(f"Nombre total de lignes dans le DataFrame final : **{len(st.session_state['full_df'])}**")
-        st.write("Distribution des tickers dans le DataFrame final :")
-        st.dataframe(st.session_state['full_df']['Ticker'].value_counts().reset_index().rename(columns={'index': 'Ticker', 'Ticker': 'Nombre de Lignes'}))
+        # Téléchargement des données historiques
+        data = ticker.history(period=period, interval=interval_val, auto_adjust=True, prepost=True)
         
-        with st.expander("Aperçu des premières lignes du DataFrame final"):
-            st.dataframe(st.session_state['full_df'].head(20)) 
-
-        st.markdown("<hr style='border:1px solid #e0e6ed; margin-top:30px; margin-bottom:30px;'>", unsafe_allow_html=True)
-        st.subheader("Graphiques Détaillés")
-        if st.session_state['data_by_ticker']:
-            ticker_display_names_map = {v: k for k, v in tickers_dict.items()}
-            plot_selection_options = sorted([ticker_display_names_map.get(s, s) for s in st.session_state['data_by_ticker'].keys()])
-
-            selected_plot_name = st.selectbox(
-                "Sélectionne l'entreprise pour le graphique :",
-                plot_selection_options,
-                key="main_plot_select"
-            )
-            ticker_to_plot_symbol = tickers_dict.get(selected_plot_name, selected_plot_name)
+        if not data.empty:
+            # Reset de l'index pour avoir Datetime comme colonne
+            data = data.reset_index()
+            data['Ticker'] = ticker_symbol
             
-            chart_df = st.session_state['data_by_ticker'].get(ticker_to_plot_symbol)
-
-            if chart_df is not None and not chart_df.empty:
-                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                                    vertical_spacing=0.03, row_heights=[0.7, 0.3])
-
-                fig.add_trace(go.Candlestick(
-                    x=chart_df['Datetime'],
-                    open=chart_df['Open'],
-                    high=chart_df['High'],
-                    low=chart_df['Low'],
-                    close=chart_df['Close'],
-                    name='Prix'
-                ), row=1, col=1)
-
-                fig.add_trace(go.Bar(
-                    x=chart_df['Datetime'],
-                    y=chart_df['Volume'],
-                    name='Volume',
-                    marker_color='blue'
-                ), row=2, col=1)
-
-                fig.update_layout(
-                    title_text=f"Cours en Chandeliers et Volume de {selected_plot_name} ({ticker_to_plot_symbol}) - Période: {selected_period}",
-                    xaxis_rangeslider_visible=False,
-                    height=600
-                )
-
-                fig.update_yaxes(title_text="Prix", row=1, col=1)
-                fig.update_yaxes(title_text="Volume", row=2, col=1)
+            # Tentative de récupération des informations de l'entreprise
+            try:
+                info = ticker.info
+                company_name = info.get('longName', info.get('shortName', ticker_symbol))
+                sector = info.get('sector', 'Non spécifié')
+                market_cap = info.get('marketCap', None)
+                currency = info.get('currency', 'EUR')
                 
-                st.plotly_chart(fig, use_container_width=True, key="main_candlestick_chart")
+                # Ajout des informations au DataFrame
+                data['Company_Name'] = company_name
+                data['Sector'] = sector
+                data['Market_Cap'] = market_cap
+                data['Currency'] = currency
+                
+            except Exception as info_error:
+                # Valeurs par défaut en cas d'erreur
+                data['Company_Name'] = ticker_symbol
+                data['Sector'] = 'Non spécifié'
+                data['Market_Cap'] = None
+                data['Currency'] = 'EUR'
+            
+            # Ajout d'indicateurs techniques
+            data = add_technical_indicators(data)
+            
+        return ticker_symbol, data, None
+        
+    except Exception as e:
+        return ticker_symbol, pd.DataFrame(), str(e)
+
+def add_technical_indicators(df):
+    """Ajoute des indicateurs techniques au DataFrame"""
+    if len(df) < 2:
+        return df
+    
+    try:
+        # Moyennes mobiles
+        if len(df) >= 10:
+            df['MA_10'] = df['Close'].rolling(window=10, min_periods=1).mean()
+        if len(df) >= 20:
+            df['MA_20'] = df['Close'].rolling(window=20, min_periods=1).mean()
+        if len(df) >= 50:
+            df['MA_50'] = df['Close'].rolling(window=50, min_periods=1).mean()
+        
+        # RSI (Relative Strength Index)
+        if len(df) >= 14:
+            delta = df['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=1).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
+            rs = gain / loss
+            df['RSI'] = 100 - (100 / (1 + rs))
+        
+        # MACD
+        if len(df) >= 26:
+            exp1 = df['Close'].ewm(span=12).mean()
+            exp2 = df['Close'].ewm(span=26).mean()
+            df['MACD'] = exp1 - exp2
+            df['MACD_Signal'] = df['MACD'].ewm(span=9).mean()
+            df['MACD_Histogram'] = df['MACD'] - df['MACD_Signal']
+        
+        # Bandes de Bollinger
+        if len(df) >= 20:
+            df['BB_Middle'] = df['Close'].rolling(window=20).mean()
+            bb_std = df['Close'].rolling(window=20).std()
+            df['BB_Upper'] = df['BB_Middle'] + (bb_std * 2)
+            df['BB_Lower'] = df['BB_Middle'] - (bb_std * 2)
+        
+    except Exception as e:
+        st.warning(f"Erreur lors du calcul des indicateurs techniques: {e}")
+    
+    return df
+
+def collect_data_parallel(tickers_to_collect, period, max_workers=5):
+    """Collecte les données en parallèle pour améliorer les performances"""
+    collected_data = {}
+    errors = []
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Soumission de tous les jobs
+        future_to_ticker = {
+            executor.submit(get_ticker_data_enhanced, ticker, period): ticker 
+            for ticker in tickers_to_collect
+        }
+        
+        # Récupération des résultats
+        for future in as_completed(future_to_ticker):
+            ticker_symbol, data, error = future.result()
+            
+            if error:
+                errors.append((ticker_symbol, error))
+            elif not data.empty:
+                collected_data[ticker_symbol] = data
             else:
-                st.warning(f"Impossible d'afficher le graphique pour {selected_plot_name}. Données manquantes ou vides.")
-        else:
-            st.warning("Aucune donnée disponible pour les graphiques.")
+                errors.append((ticker_symbol, "Aucune donnée disponible"))
+    
+    return collected_data, errors
 
-        csv = st.session_state['full_df'].to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "Télécharger CSV",
-            csv,
-            f"cac40_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            key="main_csv_download"
-        )
-    else:
-        st.info("Cliquez sur 'Lancer la collecte des données' pour afficher les informations du CAC 40.")
+# --- Application Principale ---
+st.title("📈 CAC 40 Tracker Pro")
+st.markdown("*Suivi avancé et analyse en temps réel des valeurs du CAC 40*")
 
-
-# --- Contenu du Deuxième Onglet : Visualisation du CAC 40 ---
-with tab2:
-    st.header("Visualisation Complète du CAC 40")
-    st.write("Voici la liste complète des entreprises du CAC 40 actuellement suivie, avec leurs symboles boursiers.")
-
+# --- Sidebar pour les contrôles ---
+with st.sidebar:
+    st.header("⚙️ Configuration")
+    
+    # Actualisation des tickers CAC 40
+    if st.button("🔄 Actualiser CAC 40", use_container_width=True):
+        with st.spinner("Actualisation en cours..."):
+            try:
+                st.session_state['tickers_dict'] = get_cac40_tickers()
+                st.success("✅ Liste CAC 40 actualisée !")
+            except Exception as e:
+                st.error(f"❌ Erreur lors de l'actualisation: {e}")
+    
+    # Initialisation des tickers
+    if 'tickers_dict' not in st.session_state:
+        try:
+            st.session_state['tickers_dict'] = get_cac40_tickers()
+        except Exception as e:
+            st.error(f"Erreur lors du chargement des tickers: {e}")
+            st.session_state['tickers_dict'] = {}
+    
+    tickers_dict = st.session_state.get('tickers_dict', {})
+    
     if tickers_dict:
-        df_cac40_list = pd.DataFrame(tickers_dict.items(), columns=["Nom de l'entreprise", "Symbole (Ticker)"])
-        df_cac40_list = df_cac40_list.sort_values("Nom de l'entreprise").reset_index(drop=True)
-        
-        st.dataframe(df_cac40_list, use_container_width=True)
-
-        st.markdown("<hr style='border:1px solid #e0e6ed; margin-top:30px; margin-bottom:30px;'>", unsafe_allow_html=True)
-        st.subheader("Accès aux données récentes de l'indice CAC 40")
-        
-        st.info("Vous pouvez visualiser le cours de l'indice CAC 40 (`^FCHI`) ci-dessous pour la période sélectionnée.")
-        if st.button("Afficher le graphique de l'indice CAC 40", key="show_cac40_index_chart"):
-            with st.spinner(f"Récupération des données de l'indice CAC 40 pour la période '{selected_period}'..."):
-                try:
-                    index_data = get_ticker_data('^FCHI', selected_period)
-                    if not index_data.empty:
-                        if 'Datetime' not in index_data.columns and isinstance(index_data.index, pd.DatetimeIndex):
-                            index_data = index_data.reset_index()
-                            index_data = index_data.rename(columns={'index': 'Datetime'})
-                        
-                        if 'Datetime' in index_data.columns and index_data['Datetime'].dtype == 'datetime64[ns, UTC]':
-                            index_data['Datetime'] = index_data['Datetime'].dt.tz_localize(None)
-
-                        fig_index = go.Figure(data=[go.Candlestick(
-                            x=index_data['Datetime'],
-                            open=index_data['Open'],
-                            high=index_data['High'],
-                            low=index_data['Low'],
-                            close=index_data['Close'],
-                            name='CAC 40 Index'
-                        )])
-                        fig_index.update_layout(
-                            title=f"Cours de l'indice CAC 40 (^FCHI) - Période: {selected_period}",
-                            xaxis_title="Date / Heure",
-                            yaxis_title="Points",
-                            xaxis_rangeslider_visible=False
-                        )
-                        st.plotly_chart(fig_index, use_container_width=True, key="cac40_index_chart")
-                    else:
-                        st.warning("Impossible de récupérer les données de l'indice CAC 40 (^FCHI). Le DataFrame est vide. Cela peut être dû à un intervalle non disponible pour la période sélectionnée.")
-                except Exception as e:
-                    st.error(f"Erreur lors de la collecte de l'indice CAC 40 : {e}")
-
-        st.write("Pour le moment, vous pouvez collecter les dernières données de chaque entreprise en sélectionnant l'onglet 'Suivi en temps réel'.")
-        
-        csv_cac40_list = df_cac40_list.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "Télécharger la liste complète du CAC 40 (CSV)",
-            csv_cac40_list,
-            f"cac40_liste_{datetime.now().strftime('%Y%m%d')}.csv",
-            key="download_cac40_list"
-        )
+        st.success(f"✅ {len(tickers_dict)} entreprises chargées")
     else:
-        st.warning("La liste des tickers du CAC 40 n'a pas pu être chargée. Veuillez rafraîchir la page ou vérifier la connexion.")
+        st.warning("⚠️ Aucune entreprise chargée")
+    
+    st.markdown("---")
+    
+    # Sélection de la période
+    st.subheader("📅 Période d'Analyse")
+    period_options = {
+        "1 jour": "1d", "5 jours": "5d", "1 mois": "1mo", 
+        "3 mois": "3mo", "6 mois": "6mo", "1 an": "1y",
+        "2 ans": "2y", "5 ans": "5y", "Maximum": "max"
+    }
+    selected_period_label = st.selectbox("Sélectionnez la période:", list(period_options.keys()), index=2)
+    selected_period = period_options[selected_period_label]
+    
+    st.markdown("---")
+    
+    # Sélection des entreprises avec recherche
+    st.subheader("🏢 Sélection des Entreprises")
+    
+    if tickers_dict:
+        # Barre de recherche
+        search_term = st.text_input("🔍 Rechercher", placeholder="Tapez le nom d'une entreprise...")
+        
+        # Filtre par secteur (si disponible dans les données)
+        all_companies = list(tickers_dict.keys())
+        
+        # Filtrage basé sur la recherche
+        if search_term:
+            filtered_companies = [name for name in all_companies 
+                                if search_term.lower() in name.lower()]
+        else:
+            filtered_companies = all_companies
+        
+        # Sélection multiple avec valeurs par défaut
+        default_selection = filtered_companies[:5] if len(filtered_companies) >= 5 else filtered_companies
+        selected_companies = st.multiselect(
+            "Entreprises à analyser:",
+            filtered_companies,
+            default=default_selection,
+            help=f"{len(filtered_companies)} entreprises disponibles"
+        )
+        
+        # Affichage du nombre sélectionné
+        if selected_companies:
+            st.info(f"📊 {len(selected_companies)} entreprise(s) sélectionnée(s)")
+        else:
+            st.warning("⚠️ Aucune entreprise sélectionnée")
+    else:
+        st.error("❌ Impossible de charger la liste des entreprises")
+        selected_companies = []
+    
+    st.markdown("---")
+    
+    # Paramètres de collecte
+    st.subheader("⚡ Paramètres de Collecte")
+    max_workers = st.slider(
+        "Threads parallèles:", 
+        min_value=1, 
+        max_value=10, 
+        value=5,
+        help="Plus de threads = collecte plus rapide (mais plus de charge sur l'API)"
+    )
+    
+    # Options avancées
+    with st.expander("🔧 Options Avancées"):
+        include_indicators = st.checkbox("Inclure les indicateurs techniques", value=True)
+        auto_refresh = st.checkbox("Actualisation automatique (5 min)", value=False)
+        if auto_refresh:
+            st.info("🔄 L'actualisation automatique est activée")
+
+# --- Onglets principaux ---
+tab1, tab2, tab3 = st.tabs(["📊 Analyse Temps Réel", "📈 Vue d'Ensemble CAC 40", "📋 Analyse Technique"])
+
+# --- Onglet 1: Analyse Temps Réel ---
+with tab1:
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.header("📊 Analyse en Temps Réel")
+        st.markdown(f"*Données pour la période: **{selected_period_label}** • Indicateurs techniques: {'✅' if include_indicators else '❌'}*")
+    
+    with col2:
+        # Bouton de collecte principal
+        collect_button = st.button(
+            "🚀 Lancer l'Analyse", 
+            use_container_width=True, 
+            type="primary",
+            disabled=not selected_companies
+        )
+    
+    # Gestion de la collecte des données
+    if collect_button:
+        if not selected_companies:
+            st.error("⚠️ Veuillez sélectionner au moins une entreprise")
+        else:
+            # Préparation de la collecte
+            tickers_to_collect = [tickers_dict[name] for name in selected_companies]
+            
+            # Interface de progression
+            progress_placeholder = st.empty()
+            status_placeholder = st.empty()
+            
+            with progress_placeholder.container():
+                st.info(f"🔄 Démarrage de la collecte pour {len(tickers_to_collect)} valeurs...")
+                progress_bar = st.progress(0)
+            
+            # Collecte parallèle des données
+            start_time = time.time()
+            
+            try:
+                with status_placeholder.container():
+                    st.info("📡 Collecte des données en cours...")
+                
+                collected_data, collection_errors = collect_data_parallel(
+                    tickers_to_collect, 
+                    selected_period, 
+                    max_workers
+                )
+                
+                collection_time = time.time() - start_time
+                progress_bar.progress(1.0)
+                
+                # Stockage des résultats dans la session
+                st.session_state['collected_data'] = collected_data
+                st.session_state['collection_errors'] = collection_errors
+                st.session_state['collection_time'] = collection_time
+                st.session_state['collection_timestamp'] = datetime.now()
+                
+                # Nettoyage de l'interface
+                progress_placeholder.empty()
+                
+                # Message de succès avec statistiques
+                if collected_data:
+                    total_rows = sum(len(df) for df in collected_data.values())
+                    success_rate = (len(collected_data) / len(tickers_to_collect)) * 100
+                    
+                    status_placeholder.success(
+                        f"✅ Collecte terminée: {len(collected_data)}/{len(tickers_to_collect)} valeurs "
+                        f"({success_rate:.1f}% succès) • {total_rows:,} points de données • "
+                        f"Temps: {collection_time:.1f}s"
+                    )
+                    
+                    # Affichage des erreurs s'il y en a
+                    if collection_errors:
+                        with st.expander(f"⚠️ Erreurs de collecte ({len(collection_errors)})"):
+                            for ticker, error in collection_errors:
+                                company_name = [k for k, v in tickers_dict.items() if v == ticker]
+                                display_name = company_name[0] if company_name else ticker
+                                st.warning(f"**{display_name} ({ticker})**: {error}")
+                else:
+                    status_placeholder.error("❌ Aucune donnée collectée. Vérifiez votre connexion internet.")
+                    
+            except Exception as e:
+                progress_placeholder.empty()
+                status_placeholder.error(f"❌ Erreur lors de la collecte: {e}")
+    
+    # Affichage des données collectées
+    if 'collected_data' in st.session_state and st.session_state['collected_data']:
+        st.markdown("---")
+        
+        collected_data = st.session_state['collected_data']
+        collection_time = st.session_state.get('collection_time', 0)
+        collection_timestamp = st.session_state.get('collection_timestamp', datetime.now())
+        
+        # Métriques de résumé
+        st.subheader("📊 Résumé de la Collecte")
+        
+        # Calcul des statistiques globales
+        total_rows = sum(len(df) for df in collected_data.values())
+        quality_scores = [calculate_data_quality(df)[0] for df in collected_data.values()]
+        avg_quality = np.mean(quality_scores) if quality_scores else 0
+        
+        # Affichage des métriques en colonnes
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-value">{len(collected_data)}</div>
+                    <div class="metric-label">Valeurs Collectées</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-value">{total_rows:,}</div>
+                    <div class="metric-label">Points de Données</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            quality_class = ("excellent" if avg_quality >= 95 else 
+                           "good" if avg_quality >= 80 else 
+                           "medium" if avg_quality >= 60 else "poor")
+            st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-value data-quality-{quality_class}">{avg_quality:.1f}%</div>
+                    <div class="metric-label">Qualité Moyenne</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-value">{collection_time:.1f}s</div>
+                    <div class="metric-label">Temps de Collecte</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        # Informations sur la dernière mise à jour
+        st.markdown(f"""
+            <div class="info-card">
+                <p><strong>📅 Dernière mise à jour:</strong> {collection_timestamp.strftime('%d/%m/%Y à %H:%M:%S')}</p>
+                <p><strong>⏱️ Période analysée:</strong> {selected_period_label} • <strong>🔧 Threads utilisés:</strong> {max_workers}</p>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Section de visualisation avancée
+        st.subheader("📈 Visualisation Interactive")
+        
+        # Sélection de la valeur à analyser
+        ticker_names = {v: k for k, v in tickers_dict.items()}
+        available_tickers = list(collected_data.keys())
+        display_names = [ticker_names.get(t, t) for t in available_tickers]
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            selected_display = st.selectbox(
+                "Sélectionner une valeur pour l'analyse détaillée:", 
+                display_names, 
+                key="viz_select"
+            )
+        
+        with col2:
+            chart_type = st.selectbox(
+                "Type de graphique:",
+                ["Chandelier + Volume", "Prix + Indicateurs", "Comparaison Multiple"],
+                key="chart_type_select"
+            )
+        
+        selected_ticker = tickers_dict.get(selected_display, selected_display)
