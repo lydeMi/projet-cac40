@@ -28,7 +28,6 @@ tab1, tab2 = st.tabs(["Suivi en temps réel", "Visualisation du CAC 40"])
 with tab1:
     st.header("Suivi en temps réel – Données Intraday")
 
-    # AJOUT 1: Selectbox pour choisir la période des données
     period_options = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
     selected_period = st.selectbox("Période des données :", period_options, index=0, key="period_selectbox")
 
@@ -41,25 +40,23 @@ with tab1:
 
     collection_status_placeholder = st.empty()
 
-    # AJOUT 2: Fonction pour récupérer les données avec mise en cache
-    # ttl=3600 signifie que les données seront mises en cache pendant 1 heure (3600 secondes)
     @st.cache_data(ttl=3600)
     def get_ticker_data(ticker_symbol, period):
-        # Pour les périodes plus longues que 1 jour, l'intervalle '1m' peut ne pas être disponible ou être trop lourd.
-        # Yahoo Finance supporte '1m' uniquement pour '1d' et '5d'.
-        # Pour les périodes plus longues, nous allons ajuster l'intervalle.
+        # Logique pour déterminer l'intervalle approprié en fonction de la période
         if period == "1d":
             interval_val = "1m"
         elif period == "5d":
-            interval_val = "1m" # '1m' est encore supporté pour 5d
-        elif period in ["1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]:
-            interval_val = "1h" # Utilisation de '1h' pour les périodes plus longues pour plus de granularité que '1d'
-            # Si '1h' n'est pas supporté pour la période, yfinance peut revenir à '1d' ou lever une erreur.
-            # '1d' est toujours une option sûre pour les périodes longues.
-            # Vous pouvez mettre '1d' ici si '1h' cause des problèmes de données manquantes.
-        else: # Fallback par défaut si une période inattendue est choisie
-            interval_val = "1d"
-
+            interval_val = "1m"
+        elif period in ["1mo", "3mo"]:
+            interval_val = "5m" # '5m' souvent disponible pour 1-3 mois
+        elif period in ["6mo", "1y"]:
+            interval_val = "1h" # '1h' souvent disponible pour 6 mois à 1 an
+        else: # Pour les périodes plus longues (2y, 5y, 10y, ytd, max)
+            interval_val = "1d" # '1d' est le plus fiable pour les très longues périodes
+        
+        # Yahoo Finance peut parfois retourner des df vides ou des erreurs
+        # si l'intervalle demandé n'est pas valide pour une période donnée.
+        # Ici, nous utilisons les intervalles les plus communs.
 
         data = yf.download(ticker_symbol, period=period, interval=interval_val, progress=False)
         return data
@@ -73,9 +70,7 @@ with tab1:
         collection_status_placeholder.info(f"Début de la collecte pour {len(tickers_symbols_to_collect)} tickers...")
         print(f"DEBUG_LOG: Début de la collecte pour {len(tickers_symbols_to_collect)} tickers.")
 
-        # Nous allons adapter les colonnes attendues car 'Datetime' peut être l'index pour les périodes longues.
-        # Plotly peut gérer l'index comme axe X.
-        EXPECTED_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Volume', 'Ticker'] # Datetime sera géré par l'index ou la colonne Datetime si reset_index()
+        EXPECTED_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Volume', 'Ticker']
 
         with st.spinner("Téléchargement des données en cours... Veuillez patienter."):
             for i, ticker_symbol in enumerate(tickers_symbols_to_collect):
@@ -94,7 +89,7 @@ with tab1:
                             data = data.reset_index()
                             data = data.rename(columns={'index': 'Datetime'})
                         
-                        # AJOUT 3: Gestion des Timezones (conversion en timezone naive)
+                        # Gestion des Timezones (conversion en timezone naive)
                         if 'Datetime' in data.columns and data['Datetime'].dtype == 'datetime64[ns, UTC]':
                             data['Datetime'] = data['Datetime'].dt.tz_localize(None)
                         
@@ -110,7 +105,6 @@ with tab1:
                         else:
                             data.columns = [col.capitalize() if col != 'Datetime' else col for col in data.columns]
                         
-                        # Assurer que 'Datetime' est traité comme une colonne pour l'affichage uniforme
                         processed_data_columns = ['Datetime'] + [col for col in EXPECTED_COLUMNS if col != 'Ticker'] + ['Ticker']
                         processed_data = pd.DataFrame(columns=processed_data_columns)
                         
@@ -119,10 +113,10 @@ with tab1:
                                 processed_data[col] = data[col]
                             else:
                                 processed_data[col] = np.nan 
-                                if col != 'Ticker': # Ne pas alerter pour Ticker, c'est ajouté après
+                                if col != 'Ticker':
                                     st.warning(f"La colonne '{col}' est manquante pour {ticker_symbol} et a été ajoutée avec des valeurs vides.")
 
-                        processed_data = processed_data[processed_data_columns] # Réordonner les colonnes
+                        processed_data = processed_data[processed_data_columns]
 
                         collected_dfs.append(processed_data)
                         data_by_ticker[ticker_symbol] = processed_data 
@@ -139,7 +133,7 @@ with tab1:
                     st.error(f"Erreur lors de la collecte pour {company_display_name} ({ticker_symbol}) : {e}")
                     print(f"DEBUG_LOG: Erreur pour {ticker_symbol}: {e}")
 
-                time.sleep(0.5) # Petite pause pour éviter de surcharger l'API ou l'affichage
+                time.sleep(0.5)
 
         collection_status_placeholder.empty()
         st.info(f"Fin de la collecte. {len(collected_dfs)} DataFrames valides collectés.")
@@ -155,7 +149,6 @@ with tab1:
             st.session_state['data_by_ticker'] = {}
             st.warning("Aucune donnée du CAC 40 n'a pu être récupérée pour les entreprises sélectionnées. Vérifiez les tickers ou réessayez plus tard.")
 
-    # --- Section d'affichage des données agrégées (toujours visible si données présentes) ---
     if 'full_df' in st.session_state and not st.session_state['full_df'].empty:
         st.markdown("---")
         st.subheader("Résumé des données agrégées")
@@ -166,7 +159,6 @@ with tab1:
         with st.expander("Aperçu des premières lignes du DataFrame final"):
             st.dataframe(st.session_state['full_df'].head(20)) 
 
-        # --- Section Graphiques Détaillés (avec VOLUME) ---
         st.subheader("Graphiques Détaillés")
         if st.session_state['data_by_ticker']:
             ticker_display_names_map = {v: k for k, v in tickers_dict.items()}
@@ -216,7 +208,6 @@ with tab1:
         else:
             st.warning("Aucune donnée disponible pour les graphiques.")
 
-        # --- Bouton d'Export CSV ---
         csv = st.session_state['full_df'].to_csv(index=False).encode("utf-8")
         st.download_button(
             "💾 Télécharger CSV",
@@ -273,7 +264,7 @@ with tab2:
                         )
                         st.plotly_chart(fig_index, use_container_width=True, key="cac40_index_chart")
                     else:
-                        st.warning("Impossible de récupérer les données de l'indice CAC 40 (^FCHI). Le DataFrame est vide.")
+                        st.warning("Impossible de récupérer les données de l'indice CAC 40 (^FCHI). Le DataFrame est vide. Cela peut être dû à un intervalle non disponible pour la période sélectionnée.")
                 except Exception as e:
                     st.error(f"Erreur lors de la collecte de l'indice CAC 40 : {e}")
 
