@@ -2,9 +2,11 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
-from get_cac40_tickers import get_cac40_tickers # Importe votre script local
+# Assurez-vous que ce fichier est bien dans le même répertoire que app.py
+from get_cac40_tickers import get_cac40_tickers 
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import plotly.express as px # Importé ici car utilisé dans plusieurs onglets
 import time
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -506,7 +508,6 @@ with st.sidebar:
     
     if tickers_dict:
         # Récupérer tous les secteurs disponibles (hypothèse : si get_cac40_tickers ou la première collecte fournit le secteur)
-        # Pour une meilleure robustesse, cette partie pourrait être pré-collectée une fois.
         all_sectors = []
         if 'collected_data' in st.session_state and st.session_state['collected_data']:
             for df_val in st.session_state['collected_data'].values():
@@ -540,20 +541,33 @@ with st.sidebar:
         else:
             filtered_companies = filtered_companies_by_search
 
-        # Pré-sélection par défaut si aucune n'est sélectionnée et filtre actif
-        default_selection = []
-        if not st.session_state.get('initial_company_selection_done', False) or not selected_companies:
-            # Avoid re-selecting defaults if already selected by user
-            if filtered_companies:
-                default_selection = filtered_companies[:5] # Select first 5 filtered companies by default
-                st.session_state['initial_company_selection_done'] = True
+        # --- DÉBUT DE LA CORRECTION POUR L'ERREUR NameError ---
+        # Déterminez la sélection par défaut uniquement si le multiselect n'a pas encore
+        # été défini dans le st.session_state (première exécution)
+        # ou si la sélection actuelle est vide et que des entreprises filtrées sont disponibles.
+        
+        # Récupère la valeur actuelle du multiselect depuis st.session_state
+        # Si la clé n'existe pas, cela signifie qu'il n'a pas encore été rendu ou interagi.
+        current_multiselect_value = st.session_state.get("company_multiselect", [])
+        
+        # Définit la valeur par défaut pour le widget.
+        # Si la sélection actuelle est vide ET qu'il y a des entreprises filtrées,
+        # alors proposez les 5 premières entreprises filtrées comme défaut.
+        # Sinon, utilisez la sélection actuelle (peut être vide si l'utilisateur a tout désélectionné).
+        default_selection_for_widget = current_multiselect_value 
+        if not current_multiselect_value and filtered_companies:
+            default_selection_for_widget = filtered_companies[:5]
 
         selected_companies = st.multiselect(
             "Entreprises à analyser:",
             filtered_companies,
-            default=default_selection,
+            default=default_selection_for_widget, # Utilisez la valeur par défaut calculée
+            key="company_multiselect", # ATTENTION: Ce 'key' est essentiel pour la persistance de l'état
             help=f"{len(filtered_companies)} entreprises disponibles après filtre"
         )
+        # 'selected_companies' est maintenant GARANTI d'être défini après l'appel à st.multiselect.
+        # La ligne problématique qui causait le NameError a été supprimée/intégrée.
+        # --- FIN DE LA CORRECTION POUR L'ERREUR NameError ---
         
         # Affichage du nombre sélectionné
         if selected_companies:
@@ -562,7 +576,7 @@ with st.sidebar:
             st.warning("⚠️ Aucune entreprise sélectionnée")
     else:
         st.error("❌ Impossible de charger la liste des entreprises")
-        selected_companies = []
+        selected_companies = [] # Assurez-vous que selected_companies est toujours défini
     
     st.markdown("---")
     
@@ -799,12 +813,18 @@ with tab1:
                 st.subheader(f"📈 Prix et Indicateurs Techniques pour {company_name}")
                 if not df_single.empty and include_indicators:
                     plot_rows_indicators = 1 # Start with Close price
-                    if 'RSI' in df_single.columns and not df_single['RSI'].isnull().all(): plot_rows_indicators += 1
-                    if 'MACD' in df_single.columns and not df_single['MACD'].isnull().all(): plot_rows_indicators += 1
+                    row_titles_indicators = ["Prix de Clôture & Moyennes Mobiles"]
+                    if 'RSI' in df_single.columns and not df_single['RSI'].isnull().all():
+                        plot_rows_indicators += 1
+                        row_titles_indicators.append("RSI (Relative Strength Index)")
+                    if 'MACD' in df_single.columns and not df_single['MACD'].isnull().all() and not df_single['MACD_Signal'].isnull().all():
+                        plot_rows_indicators += 1
+                        row_titles_indicators.append("MACD (Moving Average Convergence Divergence)")
+
 
                     fig = make_subplots(rows=plot_rows_indicators, cols=1, shared_xaxes=True,
                                         vertical_spacing=0.1,
-                                        row_titles=["Prix de Clôture & Moyennes Mobiles", "RSI (Relative Strength Index)", "MACD (Moving Average Convergence Divergence)"][:plot_rows_indicators])
+                                        row_titles=row_titles_indicators)
                     
                     current_row_indicator = 1
                     # Prix
@@ -884,8 +904,6 @@ with tab1:
 
 # --- Onglet 2: Vue d'Ensemble CAC 40 ---
 with tab2:
-    import plotly.express as px # Import here to avoid circular dependencies if get_cac40_tickers also used it
-
     st.header("🌍 Vue d'Ensemble du CAC 40")
     st.markdown("Aperçu des performances globales et des statistiques clés des entreprises sélectionnées.")
 
@@ -1034,7 +1052,7 @@ with tab3:
                                             row_titles=row_titles_tech)
                     
                     current_row_tech = 1
-                    # --- Plot 1: Close Price & Moving Averages ---
+                    # --- Plot 1: Close Price & Moyennes Mobiles ---
                     fig_tech.add_trace(go.Scatter(x=df_tech['Date'], y=df_tech['Close'], mode='lines', name='Prix Clôture', line=dict(color='blue')), row=current_row_tech, col=1)
                     if 'MA_10' in df_tech.columns and not df_tech['MA_10'].isnull().all(): fig_tech.add_trace(go.Scatter(x=df_tech['Date'], y=df_tech['MA_10'], mode='lines', name='MA 10', line=dict(color='orange')), row=current_row_tech, col=1)
                     if 'MA_20' in df_tech.columns and not df_tech['MA_20'].isnull().all(): fig_tech.add_trace(go.Scatter(x=df_tech['Date'], y=df_tech['MA_20'], mode='lines', name='MA 20', line=dict(color='purple')), row=current_row_tech, col=1)
