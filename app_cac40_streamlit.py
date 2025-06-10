@@ -2,9 +2,9 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 from datetime import datetime
-from get_cac40_tickers import get_cac40_tickers
+from get_cac40_tickers import get_cac40_tickers # Assurez-vous que ce fichier est bien présent
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots # <-- NOUVEL IMPORT pour les sous-graphiques
+from plotly.subplots import make_subplots
 import time
 import numpy as np
 
@@ -28,6 +28,10 @@ tab1, tab2 = st.tabs(["Suivi en temps réel", "Visualisation du CAC 40"])
 with tab1:
     st.header("Suivi en temps réel – Données Intraday")
 
+    # AJOUT 1: Selectbox pour choisir la période des données
+    period_options = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
+    selected_period = st.selectbox("Période des données :", period_options, index=0, key="period_selectbox")
+
     selected_companies = st.multiselect(
         "Sélectionne les entreprises à surveiller :",
         list(tickers_dict.keys()),
@@ -36,6 +40,29 @@ with tab1:
     )
 
     collection_status_placeholder = st.empty()
+
+    # AJOUT 2: Fonction pour récupérer les données avec mise en cache
+    # ttl=3600 signifie que les données seront mises en cache pendant 1 heure (3600 secondes)
+    @st.cache_data(ttl=3600)
+    def get_ticker_data(ticker_symbol, period):
+        # Pour les périodes plus longues que 1 jour, l'intervalle '1m' peut ne pas être disponible ou être trop lourd.
+        # Yahoo Finance supporte '1m' uniquement pour '1d' et '5d'.
+        # Pour les périodes plus longues, nous allons ajuster l'intervalle.
+        if period == "1d":
+            interval_val = "1m"
+        elif period == "5d":
+            interval_val = "1m" # '1m' est encore supporté pour 5d
+        elif period in ["1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]:
+            interval_val = "1h" # Utilisation de '1h' pour les périodes plus longues pour plus de granularité que '1d'
+            # Si '1h' n'est pas supporté pour la période, yfinance peut revenir à '1d' ou lever une erreur.
+            # '1d' est toujours une option sûre pour les périodes longues.
+            # Vous pouvez mettre '1d' ici si '1h' cause des problèmes de données manquantes.
+        else: # Fallback par défaut si une période inattendue est choisie
+            interval_val = "1d"
+
+
+        data = yf.download(ticker_symbol, period=period, interval=interval_val, progress=False)
+        return data
 
     if st.button("Lancer la collecte des données", key="launch_collection_button"):
         tickers_symbols_to_collect = [tickers_dict[name] for name in selected_companies]
@@ -46,7 +73,9 @@ with tab1:
         collection_status_placeholder.info(f"Début de la collecte pour {len(tickers_symbols_to_collect)} tickers...")
         print(f"DEBUG_LOG: Début de la collecte pour {len(tickers_symbols_to_collect)} tickers.")
 
-        EXPECTED_COLUMNS = ['Datetime', 'Open', 'High', 'Low', 'Close', 'Volume', 'Ticker']
+        # Nous allons adapter les colonnes attendues car 'Datetime' peut être l'index pour les périodes longues.
+        # Plotly peut gérer l'index comme axe X.
+        EXPECTED_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Volume', 'Ticker'] # Datetime sera géré par l'index ou la colonne Datetime si reset_index()
 
         with st.spinner("Téléchargement des données en cours... Veuillez patienter."):
             for i, ticker_symbol in enumerate(tickers_symbols_to_collect):
@@ -57,12 +86,21 @@ with tab1:
                 print(f"DEBUG_LOG: Tentative de collecte pour {ticker_symbol} (étape {i+1}/{len(tickers_symbols_to_collect)}).")
 
                 try:
-                    data = yf.download(ticker_symbol, period="1d", interval="1m", progress=False)
+                    data = get_ticker_data(ticker_symbol, selected_period) # Utilisation de la fonction avec cache
 
                     if not data.empty:
-                        data = data.reset_index()
+                        # Gérer le cas où Datetime est l'index
+                        if 'Datetime' not in data.columns and isinstance(data.index, pd.DatetimeIndex):
+                            data = data.reset_index()
+                            data = data.rename(columns={'index': 'Datetime'})
+                        
+                        # AJOUT 3: Gestion des Timezones (conversion en timezone naive)
+                        if 'Datetime' in data.columns and data['Datetime'].dtype == 'datetime64[ns, UTC]':
+                            data['Datetime'] = data['Datetime'].dt.tz_localize(None)
+                        
                         data["Ticker"] = ticker_symbol
                         
+                        # Harmonisation des noms de colonnes
                         if isinstance(data.columns, pd.MultiIndex):
                             new_columns = []
                             for col_tuple in data.columns:
@@ -71,17 +109,21 @@ with tab1:
                             data.columns = new_columns
                         else:
                             data.columns = [col.capitalize() if col != 'Datetime' else col for col in data.columns]
-
-                        processed_data = pd.DataFrame(columns=EXPECTED_COLUMNS)
-                        for col in EXPECTED_COLUMNS:
+                        
+                        # Assurer que 'Datetime' est traité comme une colonne pour l'affichage uniforme
+                        processed_data_columns = ['Datetime'] + [col for col in EXPECTED_COLUMNS if col != 'Ticker'] + ['Ticker']
+                        processed_data = pd.DataFrame(columns=processed_data_columns)
+                        
+                        for col in processed_data_columns:
                             if col in data.columns:
                                 processed_data[col] = data[col]
                             else:
                                 processed_data[col] = np.nan 
-                                st.warning(f"La colonne '{col}' est manquante pour {ticker_symbol} et a été ajoutée avec des valeurs vides.")
+                                if col != 'Ticker': # Ne pas alerter pour Ticker, c'est ajouté après
+                                    st.warning(f"La colonne '{col}' est manquante pour {ticker_symbol} et a été ajoutée avec des valeurs vides.")
 
-                        processed_data = processed_data[EXPECTED_COLUMNS]
-                        
+                        processed_data = processed_data[processed_data_columns] # Réordonner les colonnes
+
                         collected_dfs.append(processed_data)
                         data_by_ticker[ticker_symbol] = processed_data 
 
@@ -97,7 +139,7 @@ with tab1:
                     st.error(f"Erreur lors de la collecte pour {company_display_name} ({ticker_symbol}) : {e}")
                     print(f"DEBUG_LOG: Erreur pour {ticker_symbol}: {e}")
 
-                time.sleep(1)
+                time.sleep(0.5) # Petite pause pour éviter de surcharger l'API ou l'affichage
 
         collection_status_placeholder.empty()
         st.info(f"Fin de la collecte. {len(collected_dfs)} DataFrames valides collectés.")
@@ -125,7 +167,7 @@ with tab1:
             st.dataframe(st.session_state['full_df'].head(20)) 
 
         # --- Section Graphiques Détaillés (avec VOLUME) ---
-        st.subheader("Graphiques Intraday Détaillés")
+        st.subheader("Graphiques Détaillés")
         if st.session_state['data_by_ticker']:
             ticker_display_names_map = {v: k for k, v in tickers_dict.items()}
             plot_selection_options = sorted([ticker_display_names_map.get(s, s) for s in st.session_state['data_by_ticker'].keys()])
@@ -140,16 +182,9 @@ with tab1:
             chart_df = st.session_state['data_by_ticker'].get(ticker_to_plot_symbol)
 
             if chart_df is not None and not chart_df.empty:
-                # --- DÉBUT DE LA MODIFICATION POUR GRAPHIQUES PRIX + VOLUME ---
-                # Crée une figure avec deux sous-graphiques: un pour les chandeliers, un pour le volume
-                # rows=2, cols=1: 2 lignes, 1 colonne
-                # shared_xaxes=True: Les deux graphiques partageront le même axe des X (le temps)
-                # vertical_spacing: Ajuste l'espace vertical entre les sous-graphiques
-                # row_heights: Définit la hauteur relative de chaque sous-graphique (ex: prix 3x plus grand que volume)
                 fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
                                     vertical_spacing=0.03, row_heights=[0.7, 0.3])
 
-                # Ajoute le graphique en chandeliers sur le premier sous-graphique (row=1)
                 fig.add_trace(go.Candlestick(
                     x=chart_df['Datetime'],
                     open=chart_df['Open'],
@@ -159,27 +194,23 @@ with tab1:
                     name='Prix'
                 ), row=1, col=1)
 
-                # Ajoute le graphique de volume sur le second sous-graphique (row=2)
                 fig.add_trace(go.Bar(
                     x=chart_df['Datetime'],
                     y=chart_df['Volume'],
                     name='Volume',
-                    marker_color='blue' # Couleur pour le volume
+                    marker_color='blue'
                 ), row=2, col=1)
 
-                # Met à jour la mise en page des titres et axes
                 fig.update_layout(
-                    title_text=f"Cours Intraday en Chandeliers et Volume de {selected_plot_name} ({ticker_to_plot_symbol})",
-                    xaxis_rangeslider_visible=False, # Cache le range slider par défaut
-                    height=600 # Ajuste la hauteur de la figure pour mieux voir les deux graphiques
+                    title_text=f"Cours en Chandeliers et Volume de {selected_plot_name} ({ticker_to_plot_symbol}) - Période: {selected_period}",
+                    xaxis_rangeslider_visible=False,
+                    height=600
                 )
 
-                # Met à jour les axes Y pour les titres
                 fig.update_yaxes(title_text="Prix", row=1, col=1)
                 fig.update_yaxes(title_text="Volume", row=2, col=1)
                 
                 st.plotly_chart(fig, use_container_width=True, key="main_candlestick_chart")
-                # --- FIN DE LA MODIFICATION POUR GRAPHIQUES PRIX + VOLUME ---
             else:
                 st.warning(f"Impossible d'afficher le graphique pour {selected_plot_name}. Données manquantes ou vides.")
         else:
@@ -211,18 +242,23 @@ with tab2:
         st.markdown("---")
         st.subheader("Accès aux données récentes du CAC 40")
         
-        # --- DÉBUT DE L'AJOUT DU GRAPHIQUE D'INDICE CAC 40 ---
-        st.info("Vous pouvez visualiser le cours intraday de l'indice CAC 40 (`^FCHI`) ci-dessous.")
+        st.info("Vous pouvez visualiser le cours de l'indice CAC 40 (`^FCHI`) ci-dessous pour la période sélectionnée.")
         if st.button("Afficher le graphique de l'indice CAC 40", key="show_cac40_index_chart"):
-            with st.spinner("Récupération des données de l'indice CAC 40..."):
+            with st.spinner(f"Récupération des données de l'indice CAC 40 pour la période '{selected_period}'..."):
                 try:
-                    # Collecter l'indice CAC 40 (^FCHI)
-                    # Utilisation d'un intervalle de 1 minute pour les données intraday
-                    index_data = yf.download('^FCHI', period="1d", interval="1m", progress=False)
-                    
+                    index_data = get_ticker_data('^FCHI', selected_period) # Utilisation de la fonction avec cache
                     if not index_data.empty:
+                        # Gérer le cas où Datetime est l'index pour l'indice également
+                        if 'Datetime' not in index_data.columns and isinstance(index_data.index, pd.DatetimeIndex):
+                            index_data = index_data.reset_index()
+                            index_data = index_data.rename(columns={'index': 'Datetime'})
+                        
+                        # Gestion des Timezones (conversion en timezone naive) pour l'indice
+                        if 'Datetime' in index_data.columns and index_data['Datetime'].dtype == 'datetime64[ns, UTC]':
+                            index_data['Datetime'] = index_data['Datetime'].dt.tz_localize(None)
+
                         fig_index = go.Figure(data=[go.Candlestick(
-                            x=index_data.index, # L'index est déjà la date/heure pour l'indice
+                            x=index_data['Datetime'], # Utiliser la colonne Datetime
                             open=index_data['Open'],
                             high=index_data['High'],
                             low=index_data['Low'],
@@ -230,8 +266,8 @@ with tab2:
                             name='CAC 40 Index'
                         )])
                         fig_index.update_layout(
-                            title="Cours Intraday de l'indice CAC 40 (^FCHI)",
-                            xaxis_title="Heure",
+                            title=f"Cours de l'indice CAC 40 (^FCHI) - Période: {selected_period}",
+                            xaxis_title="Date / Heure",
                             yaxis_title="Points",
                             xaxis_rangeslider_visible=False
                         )
@@ -240,7 +276,6 @@ with tab2:
                         st.warning("Impossible de récupérer les données de l'indice CAC 40 (^FCHI). Le DataFrame est vide.")
                 except Exception as e:
                     st.error(f"Erreur lors de la collecte de l'indice CAC 40 : {e}")
-        # --- FIN DE L'AJOUT DU GRAPHIQUE D'INDICE CAC 40 ---
 
         st.write("Pour le moment, vous pouvez collecter les dernières données de chaque entreprise en sélectionnant l'onglet 'Suivi en temps réel'.")
         
