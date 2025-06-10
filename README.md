@@ -8,4 +8,4 @@ Cette application Streamlit permet de récupérer en temps réel les données in
 - Affichage des données en tableau et graphique
 - Export des résultats en CSV
 
-## Installation
+
