@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime
 from get_cac40_tickers import get_cac40_tickers
 import plotly.graph_objects as go
-import time # Import time pour le sleep
+import time
 
 st.set_page_config(page_title="CAC40 Intraday Viewer", layout="wide")
 st.title("Suivi en temps réel – CAC 40")
@@ -26,57 +26,72 @@ selected = st.multiselect(
 
 # Lancer la collecte
 if st.button("Lancer la collecte des données", key="launch_collection_button"):
-    tickers = [tickers_dict[name] for name in selected]
-    df_all = []
-    data_by_ticker = {}
+    tickers_symbols_to_collect = [tickers_dict[name] for name in selected] # Renommé pour clarté
+    
+    collected_dfs = [] # Liste pour stocker les DataFrames valides
+    data_by_ticker = {} # Dictionnaire pour les DataFrames individuels pour les graphiques
 
-    st.info(f"Début de la collecte pour {len(tickers)} tickers...") # Debug
-    for i, ticker_symbol in enumerate(tickers):
-        st.write(f"Collecte des données pour : **{ticker_symbol}** ({i+1}/{len(tickers)})") # Affiche dans l'interface
+    st.info(f"Début de la collecte pour {len(tickers_symbols_to_collect)} tickers...")
+    
+    for i, ticker_symbol in enumerate(tickers_symbols_to_collect):
+        st.write(f"Collecte des données pour : **{ticker_symbol}** ({i+1}/{len(tickers_symbols_to_collect)})")
         try:
+            # Assurez-vous que l'intervalle est correct (1m pour intraday)
             data = yf.download(ticker_symbol, period="1d", interval="1m", progress=False)
 
-            # --- DEBUT DEBUGGING ---
-            if data.empty:
-                st.warning(f"DEBUG: DataFrame vide pour {ticker_symbol} après yf.download.")
-                print(f"DEBUG_LOG: DataFrame vide pour {ticker_symbol} après yf.download.")
-            else:
-                print(f"DEBUG_LOG: {ticker_symbol} - Données récupérées, {len(data)} lignes.")
-            # --- FIN DEBUGGING ---
-
             if not data.empty:
-                data["Ticker"] = ticker_symbol
-                data.reset_index(inplace=True)
-                df_all.append(data)
-                data_by_ticker[ticker_symbol] = data
+                # Renommer la colonne d'index en 'Datetime' avant de la reset
+                if 'Datetime' not in data.columns and data.index.name != 'Datetime':
+                    data.index.name = 'Datetime' # S'assurer que l'index a un nom
+                
+                data = data.reset_index() # Transformer l'index (Datetime) en colonne
+                data["Ticker"] = ticker_symbol # Ajouter la colonne Ticker
+                
+                # S'assurer que toutes les colonnes standard sont présentes et dans le bon ordre si nécessaire
+                # Les colonnes de yfinance sont généralement 'Open', 'High', 'Low', 'Close', 'Volume'
+                # et 'Adj Close' (que nous n'utilisons pas pour OHLC).
+                # On peut sélectionner explicitement les colonnes désirées pour uniformiser
+                required_cols = ['Datetime', 'Open', 'High', 'Low', 'Close', 'Volume', 'Ticker']
+                
+                # Vérifier et ajouter les colonnes manquantes avec NaN si nécessaire (rare avec yfinance)
+                for col in required_cols:
+                    if col not in data.columns:
+                        data[col] = pd.NA # Ou 0, ou np.nan
+                        st.warning(f"La colonne '{col}' est manquante pour {ticker_symbol} et a été ajoutée avec des valeurs vides.")
+
+                # S'assurer de l'ordre des colonnes et des types (optionnel mais robuste)
+                data = data[required_cols]
+                
+                collected_dfs.append(data)
+                data_by_ticker[ticker_symbol] = data # Stocker la copie pour le graphique
                 st.success(f"{ticker_symbol} collecté avec succès.")
             else:
                 st.warning(f"Aucune donnée récupérée pour {ticker_symbol}.")
 
         except Exception as e:
             st.error(f"Erreur lors de la collecte pour {ticker_symbol} : {e}")
-            print(f"DEBUG_LOG: Erreur pour {ticker_symbol}: {e}") # Log de l'erreur
+            print(f"DEBUG_LOG: Erreur pour {ticker_symbol}: {e}")
 
-        # Ajout d'un petit délai entre les requêtes pour éviter le rate limiting de Yahoo Finance
-        time.sleep(1) # Délai de 1 seconde entre chaque requête. Vous pouvez ajuster si nécessaire.
+        time.sleep(1) # Délai pour éviter le blocage par Yahoo Finance
 
-    st.info(f"Fin de la collecte. Nombre de DataFrames collectés : {len(df_all)}") # Debug
-    if df_all:
-        df = pd.concat(df_all)
+    st.info(f"Fin de la collecte. Nombre de DataFrames collectés : {len(collected_dfs)}")
+    
+    if collected_dfs:
+        # Concaténation des DataFrames collectés verticalement
+        df = pd.concat(collected_dfs, ignore_index=True) # ignore_index=True réinitialise l'index global
+        
         st.session_state['full_df'] = df
-        st.session_state['data_by_ticker'] = data_by_ticker
+        st.session_state['data_by_ticker'] = data_by_ticker # Assurez-vous que c'est le dictionnaire des DF individuels
 
-        # --- DEBUT DEBUGGING ---
         st.write("--- Résumé des données agrégées ---")
         st.write(f"Nombre total de lignes dans le DataFrame final : {len(df)}")
         st.write("Distribution des tickers dans le DataFrame final :")
-        st.dataframe(df['Ticker'].value_counts()) # Montre combien de lignes pour chaque ticker
+        st.dataframe(df['Ticker'].value_counts())
         st.write("Aperçu des premières lignes du DataFrame final :")
-        # --- FIN DEBUGGING ---
 
-        st.dataframe(df.head(10)) # Affiche plus de lignes pour voir si d'autres tickers apparaissent au début
+        st.dataframe(df.head(20)) # Affiche plus de lignes pour mieux voir
 
-        # Graphique d'un ticker (section modifiée)
+        # Reste du code pour les graphiques et l'export CSV (inchangé)
         st.subheader("Graphiques Intraday Détaillés")
         if data_by_ticker:
             ticker_to_plot_name = st.selectbox(
@@ -108,7 +123,6 @@ if st.button("Lancer la collecte des données", key="launch_collection_button"):
         else:
             st.warning("Aucune donnée disponible pour les graphiques.")
 
-        # Export CSV
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button(
             "💾 Télécharger CSV",
@@ -119,8 +133,6 @@ if st.button("Lancer la collecte des données", key="launch_collection_button"):
     else:
         st.warning("Aucune donnée récupérée pour les entreprises sélectionnées.")
 
-# Permettre l'affichage du graphique et l'export CSV après le premier clic
-# si les données sont déjà en session (utile si l'utilisateur change de sélection de graphique sans relancer la collecte)
 if 'full_df' in st.session_state and 'data_by_ticker' in st.session_state:
     st.subheader("Graphiques Intraday Détaillés (Données en cache)")
     data_by_ticker = st.session_state['data_by_ticker']
