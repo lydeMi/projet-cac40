@@ -14,7 +14,7 @@ Cette application Streamlit permet de récupérer en temps réel les données in
 
   
 ## Déploiement
-Déployable gratuitement sur [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ton-app.streamlit.app)
+Déployable gratuitement sur [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://projet-cac40-furucjjppm9v8ncqwyuwxa.streamlit.app/)
 
 
 
