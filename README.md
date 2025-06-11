@@ -2,7 +2,7 @@
 
 **CAC40 Tracker Pro** est une application Streamlit interactive et moderne permettant de suivre en temps réel l'évolution des entreprises du CAC 40, enrichie d'indicateurs techniques et d'une interface entièrement personnalisée.
 
-![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)
+![Streamlit App]((https://projet-cac40-furucjjppm9v8ncqwyuwxa.streamlit.app/badges/streamlit_badge_black_white.svg)
 
 ---
 
