@@ -19,10 +19,3 @@
 
 ---
 
-##  Installation
-
-```bash
-git clone https://github.com/ton-utilisateur/cac40-streamlit.git
-cd cac40-streamlit
-pip install -r requirements.txt
-streamlit run app_cac40_streamlit.py
