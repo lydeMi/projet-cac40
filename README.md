@@ -14,6 +14,7 @@
 -  Indicateurs techniques intégrés : RSI, MACD, moyennes mobiles, bandes de Bollinger
 -  Tableau de bord complet avec statistiques, filtres avancés et résumé par secteur
 -  Déployable sur [Streamlit Cloud](https://streamlit.io/cloud)
+-  [redirection application](https://projet-cac40-furucjjppm9v8ncqwyuwxa.streamlit.app/)
 
 
 ---
